@@ -1,0 +1,844 @@
+// server.js
+
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
+const app = express();
+const jwt = require('jsonwebtoken');
+const db = require('./config/db');
+
+const SECRET_KEY = process.env.JWT_SECRET || 'supersecretjwtkey';
+
+// Middleware
+app.use(cors());
+app.use(express.json());
+
+// ... (toute la partie connexion et authentification reste identique) ...
+db.getConnection((err, connection) => {
+    if (err) {
+        console.error('Erreur de connexion à la base de données:', err.message);
+        return;
+    }
+    console.log('Connecté à la base de données MySQL avec l\'ID de connexion', connection.threadId);
+    connection.release();
+});
+const authenticateJWT = (req, res, next) => {
+    const authHeader = req.headers.authorization;
+    if (authHeader) {
+        const token = authHeader.split(' ')[1];
+        jwt.verify(token, SECRET_KEY, (err, user) => {
+            if (err) return res.sendStatus(403);
+            req.user = user;
+            next();
+        });
+    } else {
+        res.sendStatus(401);
+    }
+};
+const authorizeRole = (roles) => {
+    return (req, res, next) => {
+        if (!req.user || !roles.includes(req.user.role)) {
+            return res.status(403).json({ message: 'Accès non autorisé pour ce rôle.' });
+        }
+        next();
+    };
+};
+
+// ===============================================
+// === FONCTION UTILITAIRE CORRIGÉE ===
+// Elle prend un objet JS (pas une chaîne) et le normalise
+const normalizeReponses = (question) => {
+    // Si 'reponses' est déjà un tableau d'objets, on le retourne.
+    // Sinon, on le parse depuis une chaîne JSON.
+    let rawReponses = question.reponses;
+    if (typeof rawReponses === 'string') {
+        try {
+            rawReponses = JSON.parse(rawReponses);
+        } catch (e) {
+            rawReponses = []; // En cas d'erreur de parsing, on retourne un tableau vide
+        }
+    }
+
+    let normalized = [];
+    if (Array.isArray(rawReponses) && rawReponses.length > 0) {
+        if (typeof rawReponses[0] === 'string') {
+            // Ancien format détecté: ["texte1", "texte2"] -> Conversion
+            normalized = rawReponses.map(text => ({ texte: String(text).trim(), est_correcte: true }));
+        } else {
+            // Déjà au bon format (ou format inconnu qu'on laisse passer)
+            normalized = rawReponses;
+        }
+    }
+
+    return { ...question, reponses: normalized };
+};
+
+
+// ... (Routes Users, Matières, Chapitres etc. restent identiques) ...
+app.post('/api/register', (req, res) => {
+    const { username, password, role } = req.body;
+    if (!username || !password || !role) return res.status(400).json({ message: 'Tous les champs sont requis.' });
+    const sql = 'INSERT INTO Users (username, password, role) VALUES (?, ?, ?)';
+    db.query(sql, [username, password, role], (err, result) => {
+        if (err) {
+            if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ message: 'Nom d\'utilisateur déjà pris.' });
+            return res.status(500).json({ message: 'Erreur serveur.' });
+        }
+        res.status(201).json({ message: 'Utilisateur enregistré.' });
+    });
+});
+app.post('/api/login', (req, res) => {
+    const { username, password } = req.body;
+    if (!username || !password) return res.status(400).json({ message: 'Champs requis.' });
+    const sql = 'SELECT id, username, password, role FROM Users WHERE username = ?';
+    db.query(sql, [username], (err, results) => {
+        if (err) return res.status(500).json({ message: 'Erreur serveur.' });
+        if (results.length === 0) return res.status(401).json({ message: 'Identifiants incorrects.' });
+        const user = results[0];
+        if (password === user.password) {
+            const token = jwt.sign({ id: user.id, username: user.username, role: user.role }, SECRET_KEY, { expiresIn: '1h' });
+            return res.status(200).json({ token, role: user.role, username: user.username });
+        } else {
+            return res.status(401).json({ message: 'Identifiants incorrects.' });
+        }
+    });
+});
+app.get('/api/users', authenticateJWT, authorizeRole(['admin']), (req, res) => {
+    db.query('SELECT id, username, role, created_at FROM Users', (err, results) => {
+        if (err) return res.status(500).json({ message: 'Erreur serveur.' });
+        res.status(200).json(results);
+    });
+});
+app.delete('/api/users/:id', authenticateJWT, authorizeRole(['admin']), (req, res) => {
+    if (req.params.id == req.user.id) return res.status(403).json({ message: 'Impossible de supprimer son propre compte.' });
+    db.query('DELETE FROM Users WHERE id = ?', [req.params.id], (err, result) => {
+        if (err) return res.status(500).json({ message: 'Erreur serveur.' });
+        if (result.affectedRows === 0) return res.status(404).json({ message: 'Utilisateur non trouvé.' });
+        res.status(200).json({ message: 'Utilisateur supprimé.' });
+    });
+});
+app.post('/api/questions', authenticateJWT, authorizeRole(['admin', 'saisie']), async (req, res) => {
+    const { id_matiere, id_chapitre, enonce, type_question, reponses, points } = req.body;
+    if (!id_matiere || !enonce || !type_question || !points) {
+        return res.status(400).json({ message: 'Matière, énoncé, type et points sont requis.' });
+    }
+    if (type_question === 'QCM' && (!Array.isArray(reponses) || reponses.length === 0)) {
+        return res.status(400).json({ message: 'Au moins une réponse est requise pour un QCM.' });
+    }
+    try {
+        const sql = `
+            INSERT INTO Questions (id_matiere, id_chapitre, enonce, type_question, reponses, points)
+            VALUES (?, ?, ?, ?, ?, ?)
+        `;
+        const chapitreIdForDb = (id_chapitre && id_chapitre !== '') ? id_chapitre : null;
+        const params = [id_matiere, chapitreIdForDb, enonce, type_question, JSON.stringify(reponses), points];
+        const [result] = await db.promise().execute(sql, params);
+        res.status(201).json({ id: result.insertId, message: 'Question ajoutée avec succès.' });
+    } catch (err) {
+        console.error("Erreur SQL lors de l'ajout de la question:", err);
+        res.status(500).json({ message: 'Erreur serveur lors de la création de la question.' });
+    }
+});
+app.get('/api/questions', authenticateJWT, async (req, res) => {
+    const { matiereId, chapitreId } = req.query;
+    let sql = `
+        SELECT q.id, q.id_matiere, q.id_chapitre, q.enonce, q.type_question, q.reponses, q.points, q.created_at,
+               m.nom_matiere, c.nom_chapitre
+        FROM Questions q
+        JOIN Matières m ON q.id_matiere = m.id
+        LEFT JOIN Chapitres c ON q.id_chapitre = c.id
+    `;
+    const params = [];
+    sql += ' WHERE 1=1';
+
+    if (matiereId) {
+        sql += ' AND q.id_matiere = ?';
+        params.push(matiereId);
+    }
+    if (chapitreId) {
+        sql += ' AND q.id_chapitre = ?';
+        params.push(chapitreId);
+    }
+    sql += ' ORDER BY q.created_at DESC';
+    try {
+        const [results] = await db.promise().query(sql, params);
+        const parsedResults = results.map(normalizeReponses);
+        res.status(200).json(parsedResults);
+    } catch (err) {
+        console.error("Erreur SQL lors de la récupération des questions:", err);
+        res.status(500).json({ message: 'Erreur serveur lors de la récupération des questions.' });
+    }
+});
+app.put('/api/questions/:id', authenticateJWT, authorizeRole(['admin', 'saisie']), async (req, res) => {
+    const questionId = req.params.id;
+    const { enonce, points, reponses, id_chapitre, type_question } = req.body;
+    if (!enonce || !points || !type_question) {
+        return res.status(400).json({ message: 'Énoncé, points et type sont requis.' });
+    }
+    if (type_question === 'QCM' && (!Array.isArray(reponses) || reponses.length === 0)) {
+        return res.status(400).json({ message: 'Au moins une réponse est requise pour un QCM.' });
+    }
+    try {
+        const sql = `
+            UPDATE Questions
+            SET enonce = ?, points = ?, reponses = ?, id_chapitre = ?, type_question = ?
+            WHERE id = ?
+        `;
+        const chapitreIdForDb = (id_chapitre && id_chapitre !== '') ? id_chapitre : null;
+        const params = [enonce, points, JSON.stringify(reponses), chapitreIdForDb, type_question, questionId];
+        const [result] = await db.promise().execute(sql, params);
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: 'Question non trouvée.' });
+        }
+        res.status(200).json({ message: 'Question modifiée avec succès.' });
+    } catch (err) {
+        console.error("Erreur lors de la modification de la question:", err);
+        res.status(500).json({ message: 'Erreur serveur.' });
+    }
+});
+app.delete('/api/questions/:id', authenticateJWT, authorizeRole(['admin', 'saisie']), async (req, res) => {
+    const questionId = req.params.id;
+    try {
+        const [result] = await db.promise().execute('DELETE FROM Questions WHERE id = ?', [questionId]);
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: 'Question non trouvée.' });
+        }
+        res.status(200).json({ message: 'Question supprimée avec succès.' });
+    } catch (err) {
+        console.error("Erreur lors de la suppression de la question:", err);
+        if (err.code === 'ER_ROW_IS_REFERENCED_2') {
+             return res.status(409).json({ message: 'Impossible de supprimer cette question, car elle est déjà liée à un ou plusieurs examens.' });
+        }
+        res.status(500).json({ message: 'Erreur serveur.' });
+    }
+});
+app.get('/api/examens/:examenId/questions', authenticateJWT, async (req, res) => {
+    try {
+        const [rows] = await db.promise().execute(
+            `SELECT q.* FROM Questions q JOIN examen_questions eq ON q.id = eq.id_question WHERE eq.id_examen = ?`,
+            [req.params.examenId]
+        );
+        const parsedQuestions = rows.map(normalizeReponses);
+        res.status(200).json(parsedQuestions);
+    } catch (err) {
+        console.error("Erreur lors de la récupération des questions de l'examen:", err);
+        res.status(500).json({ message: "Erreur serveur." });
+    }
+});
+app.post('/api/examens/:examenId/questions', authenticateJWT, authorizeRole(['admin', 'saisie']), async (req, res) => {
+    const { questionIds } = req.body;
+    if (!Array.isArray(questionIds) || questionIds.length === 0) {
+        return res.status(400).json({ message: "Liste d'IDs de questions requise." });
+    }
+    try {
+        const values = questionIds.map(qId => [req.params.examenId, qId]);
+        await db.promise().query('INSERT IGNORE INTO examen_questions (id_examen, id_question) VALUES ?', [values]);
+        res.status(201).json({ message: `Questions ajoutées.` });
+    } catch (err) {
+        res.status(500).json({ message: "Erreur serveur." });
+    }
+});
+app.delete('/api/examens/:examenId/questions/:questionId', authenticateJWT, authorizeRole(['admin', 'saisie']), async (req, res) => {
+    try {
+        const [result] = await db.promise().execute(
+            'DELETE FROM examen_questions WHERE id_examen = ? AND id_question = ?',
+            [req.params.examenId, req.params.questionId]
+        );
+        if (result.affectedRows === 0) return res.status(404).json({ message: "Liaison non trouvée." });
+        res.status(200).json({ message: "Question retirée de l'examen." });
+    } catch (err) {
+        res.status(500).json({ message: "Erreur serveur." });
+    }
+});
+app.post('/api/matieres', authenticateJWT, authorizeRole(['admin', 'saisie']), (req, res) => {
+    const { nom_matiere, description, abreviation } = req.body;
+    if (!nom_matiere) {
+        return res.status(400).json({ message: 'Le nom de la matière est requis.' });
+    }
+    const sql = 'INSERT INTO Matières (nom_matiere, description, abreviation) VALUES (?, ?, ?)';
+    db.query(sql, [nom_matiere, description, abreviation], (err, result) => {
+        if (err) {
+            if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ message: 'Une matière avec ce nom ou cette abréviation existe déjà.' });
+            return res.status(500).json({ message: 'Erreur serveur.' });
+        }
+        res.status(201).json({ id: result.insertId, message: 'Matière ajoutée avec succès.' });
+    });
+});
+app.get('/api/matieres', authenticateJWT, (req, res) => {
+    const sql = `
+        SELECT m.id, m.nom_matiere, m.abreviation, m.description, COUNT(c.id) AS nombre_chapitres
+        FROM Matières m
+        LEFT JOIN Chapitres c ON m.id = c.id_matiere
+        GROUP BY m.id, m.nom_matiere, m.abreviation, m.description
+    `;
+    db.query(sql, (err, results) => {
+        if (err) return res.status(500).json({ message: 'Erreur serveur.' });
+        res.status(200).json(results);
+    });
+});
+app.put('/api/matieres/:id', authenticateJWT, authorizeRole(['admin', 'saisie']), (req, res) => {
+    const matiereId = req.params.id;
+    const { nom_matiere, description, abreviation } = req.body;
+    if (!nom_matiere) {
+        return res.status(400).json({ message: 'Le nom de la matière est requis.' });
+    }
+    const sql = 'UPDATE Matières SET nom_matiere = ?, description = ?, abreviation = ? WHERE id = ?';
+    db.query(sql, [nom_matiere, description, abreviation, matiereId], (err, result) => {
+        if (err) {
+            if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ message: 'Une matière avec ce nom ou cette abréviation existe déjà.' });
+            return res.status(500).json({ message: 'Erreur serveur.' });
+        }
+        if (result.affectedRows === 0) return res.status(404).json({ message: 'Matière non trouvée.' });
+        res.status(200).json({ message: 'Matière modifiée avec succès.' });
+    });
+});
+app.delete('/api/matieres/:id', authenticateJWT, authorizeRole(['admin']), (req, res) => {
+    db.query('DELETE FROM Matières WHERE id = ?', [req.params.id], (err, result) => {
+        if (err) return res.status(500).json({ message: 'Erreur serveur.' });
+        if (result.affectedRows === 0) return res.status(404).json({ message: 'Matière non trouvée.' });
+        res.status(200).json({ message: 'Matière supprimée.' });
+    });
+});
+
+app.post('/api/chapitres', authenticateJWT, authorizeRole(['admin', 'saisie']), async (req, res) => {
+    const { id_matiere, nombre_a_creer } = req.body;
+
+    // Validation des entrées
+    if (!id_matiere || !nombre_a_creer) {
+        return res.status(400).json({ message: 'L\'ID de la matière et le nombre de chapitres à créer sont requis.' });
+    }
+
+    const count = parseInt(nombre_a_creer, 10);
+    if (isNaN(count) || count <= 0) {
+        return res.status(400).json({ message: 'Le nombre de chapitres doit être un nombre positif.' });
+    }
+
+    const connection = await db.promise().getConnection();
+    try {
+        // 1. Récupérer l'abréviation de la matière
+        const [matiereRows] = await connection.execute('SELECT abreviation FROM Matières WHERE id = ?', [id_matiere]);
+
+        if (matiereRows.length === 0) {
+            return res.status(404).json({ message: 'Matière non trouvée.' });
+        }
+        const abreviation = matiereRows[0].abreviation;
+        if (!abreviation) {
+            return res.status(400).json({ message: 'La matière sélectionnée n\'a pas d\'abréviation définie. Veuillez en ajouter une avant de créer des chapitres.' });
+        }
+
+        // 2. Préparer les données pour l'insertion en masse
+        const values = [];
+        for (let i = 1; i <= count; i++) {
+            const nom_chapitre = `${abreviation} ${i}`;
+            // On prépare un tableau [id_matiere, nom_chapitre] pour chaque chapitre
+            values.push([id_matiere, nom_chapitre]);
+        }
+
+        // 3. Insérer tous les chapitres en une seule requête
+        // INSERT IGNORE permet de ne pas générer d'erreur si un chapitre existe déjà (il sera simplement ignoré)
+        const sql = 'INSERT IGNORE INTO Chapitres (id_matiere, nom_chapitre) VALUES ?';
+        const [result] = await connection.query(sql, [values]);
+
+        res.status(201).json({
+            message: `${result.affectedRows} chapitre(s) créé(s) avec succès pour la matière ${abreviation}. ${values.length - result.affectedRows} existai(en)t déjà.`
+        });
+
+    } catch (err) {
+        console.error("Erreur lors de la création en masse des chapitres:", err);
+        res.status(500).json({ message: 'Erreur serveur lors de la création des chapitres.' });
+    } finally {
+        if(connection) connection.release();
+    }
+});
+app.get('/api/chapitres', authenticateJWT, (req, res) => {
+    const sql = 'SELECT c.id, c.nom_chapitre, c.description, m.nom_matiere, m.id as id_matiere FROM Chapitres c JOIN Matières m ON c.id_matiere = m.id';
+    db.query(sql, (err, results) => {
+        if (err) return res.status(500).json({ message: 'Erreur serveur.' });
+        res.status(200).json(results);
+    });
+});
+app.get('/api/matieres/:id/chapitres', authenticateJWT, (req, res) => {
+    db.query('SELECT id, nom_chapitre, description FROM Chapitres WHERE id_matiere = ?', [req.params.id], (err, results) => {
+        if (err) return res.status(500).json({ message: 'Erreur serveur.' });
+        res.status(200).json(results);
+    });
+});
+app.put('/api/chapitres/:id', authenticateJWT, authorizeRole(['admin', 'saisie']), (req, res) => {
+    const { id_matiere, nom_chapitre, description } = req.body;
+    if (!id_matiere || !nom_chapitre) return res.status(400).json({ message: 'ID matière et nom requis.' });
+    const sql = 'UPDATE Chapitres SET id_matiere = ?, nom_chapitre = ?, description = ? WHERE id = ?';
+    db.query(sql, [id_matiere, nom_chapitre, description, req.params.id], (err, result) => {
+        if (err) {
+            if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ message: 'Ce chapitre existe déjà pour cette matière.' });
+            return res.status(500).json({ message: 'Erreur serveur.' });
+        }
+        if (result.affectedRows === 0) return res.status(404).json({ message: 'Chapitre non trouvé.' });
+        res.status(200).json({ message: 'Chapitre modifié.' });
+    });
+});
+app.delete('/api/chapitres/:id', authenticateJWT, authorizeRole(['admin']), (req, res) => {
+    db.query('DELETE FROM Chapitres WHERE id = ?', [req.params.id], (err, result) => {
+        if (err) return res.status(500).json({ message: 'Erreur serveur.' });
+        if (result.affectedRows === 0) return res.status(404).json({ message: 'Chapitre non trouvé.' });
+        res.status(200).json({ message: 'Chapitre supprimé.' });
+    });
+});
+app.get('/api/promotions', authenticateJWT, async (req, res) => {
+    try {
+        const [promotions] = await db.promise().execute('SELECT * FROM Promotions ORDER BY annee_debut DESC');
+        res.status(200).json(promotions);
+    } catch (err) {
+        res.status(500).json({ message: 'Erreur serveur.' });
+    }
+});
+app.post('/api/promotions', authenticateJWT, authorizeRole(['admin', 'saisie']), async (req, res) => {
+    const { nom_promotion, annee_debut, description } = req.body;
+    if (!nom_promotion || !annee_debut) {
+        return res.status(400).json({ message: 'Le nom et l\'année de début sont requis.' });
+    }
+    try {
+        const sql = 'INSERT INTO Promotions (nom_promotion, annee_debut, description) VALUES (?, ?, ?)';
+        const [result] = await db.promise().execute(sql, [nom_promotion, annee_debut, description]);
+        res.status(201).json({ id: result.insertId, message: 'Promotion créée.' });
+    } catch (err) {
+        if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ message: 'Cette promotion existe déjà.' });
+        res.status(500).json({ message: 'Erreur serveur.' });
+    }
+});
+app.put('/api/promotions/:id', authenticateJWT, authorizeRole(['admin', 'saisie']), async (req, res) => {
+    const { nom_promotion, annee_debut, description } = req.body;
+    if (!nom_promotion || !annee_debut) {
+        return res.status(400).json({ message: 'Le nom et l\'année sont requis.' });
+    }
+    try {
+        const sql = 'UPDATE Promotions SET nom_promotion = ?, annee_debut = ?, description = ? WHERE id = ?';
+        const [result] = await db.promise().execute(sql, [nom_promotion, annee_debut, description, req.params.id]);
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: 'Promotion non trouvée.' });
+        }
+        res.status(200).json({ message: 'Promotion modifiée avec succès.' });
+    } catch (err) {
+        if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ message: 'Ce nom de promotion existe déjà.' });
+        res.status(500).json({ message: 'Erreur serveur.' });
+    }
+});
+app.delete('/api/promotions/:id', authenticateJWT, authorizeRole(['admin']), async (req, res) => {
+    try {
+        const [result] = await db.promise().execute('DELETE FROM Promotions WHERE id = ?', [req.params.id]);
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: 'Promotion non trouvée.' });
+        }
+        res.status(200).json({ message: 'Promotion supprimée avec succès.' });
+    } catch (err) {
+        res.status(500).json({ message: 'Erreur serveur.' });
+    }
+});
+app.post('/api/examens', authenticateJWT, authorizeRole(['admin', 'saisie']), async (req, res) => {
+    const { titre, description, type_examen, id_promotion, matieres } = req.body;
+    if (!titre || !type_examen || !id_promotion || !Array.isArray(matieres) || matieres.length === 0) {
+        return res.status(400).json({ message: 'Titre, type, promotion et au moins une matière sont requis.' });
+    }
+    const connection = await db.promise().getConnection();
+    try {
+        await connection.beginTransaction();
+        const sqlExamen = 'INSERT INTO Examens (titre, description, type_examen, id_promotion) VALUES (?, ?, ?, ?)';
+        const [examenResult] = await connection.execute(sqlExamen, [titre, description, type_examen, id_promotion]);
+        const newExamenId = examenResult.insertId;
+        const sqlMatiereLink = 'INSERT INTO examen_matieres (id_examen, id_matiere, coefficient) VALUES ?';
+        const matiereValues = matieres.map(m => [newExamenId, m.id_matiere, m.coefficient]);
+        if (matiereValues.length > 0) {
+            await connection.query(sqlMatiereLink, [matiereValues]);
+        }
+        await connection.commit();
+        res.status(201).json({ id: newExamenId, message: 'Examen créé avec succès.' });
+    } catch (err) {
+        await connection.rollback();
+        res.status(500).json({ message: 'Erreur serveur.' });
+    } finally {
+        connection.release();
+    }
+});
+
+// ROUTE MISE À JOUR : Ne retourne que les examens PARENTS (modèles)
+app.get('/api/examens', authenticateJWT, async (req, res) => {
+    const { promotionId } = req.query;
+    let sql = `
+        SELECT
+            e.id,
+            e.titre,
+            e.description,
+            e.created_at,
+            e.type_examen,
+            p.nom_promotion,
+            e.id_promotion  -- *** AJOUT/VÉRIFICATION : Assurez-vous que cette ligne est présente ***
+        FROM Examens e
+        LEFT JOIN Promotions p ON e.id_promotion = p.id
+        WHERE e.id_parent_examen IS NULL
+    `;
+    const params = [];
+
+    // La logique de filtrage est déjà correcte
+    if (promotionId && promotionId !== 'all' && promotionId !== '') {
+        sql += ' AND e.id_promotion = ?';
+        params.push(promotionId);
+    }
+
+    sql += ' ORDER BY e.created_at DESC';
+
+    try {
+        const [results] = await db.promise().query(sql, params);
+        res.status(200).json(results);
+    } catch (err) {
+        console.error('Erreur lors de la récupération des modèles d\'examens:', err);
+        res.status(500).json({ message: 'Erreur serveur lors de la récupération des modèles d\'examens.' });
+    }
+});
+
+app.get('/api/examens/:id', authenticateJWT, async (req, res) => {
+    try {
+        const [examenRes] = await db.promise().execute('SELECT * FROM Examens WHERE id = ?', [req.params.id]);
+        if (examenRes.length === 0) return res.status(404).json({ message: 'Examen non trouvé.' });
+        const [matieresRes] = await db.promise().execute(
+            `SELECT m.id as id_matiere, m.nom_matiere, em.coefficient FROM examen_matieres em JOIN Matières m ON em.id_matiere = m.id WHERE em.id_examen = ?`,
+            [req.params.id]
+        );
+        res.status(200).json({ ...examenRes[0], matieres: matieresRes });
+    } catch (err) {
+        res.status(500).json({ message: 'Erreur serveur.' });
+    }
+});
+app.put('/api/examens/:id', authenticateJWT, authorizeRole(['admin', 'saisie']), async (req, res) => {
+    const examenId = req.params.id;
+    const { titre, description, type_examen, id_promotion, matieres } = req.body;
+    if (!titre || !type_examen || !id_promotion || !Array.isArray(matieres) || matieres.length === 0) {
+        return res.status(400).json({ message: 'Champs requis manquants.' });
+    }
+    const connection = await db.promise().getConnection();
+    try {
+        await connection.beginTransaction();
+        await connection.execute('UPDATE Examens SET titre = ?, description = ?, type_examen = ?, id_promotion = ? WHERE id = ?', [titre, description, type_examen, id_promotion, examenId]);
+        await connection.execute('DELETE FROM examen_matieres WHERE id_examen = ?', [examenId]);
+        const sqlMatiereLink = 'INSERT INTO examen_matieres (id_examen, id_matiere, coefficient) VALUES ?';
+        const matiereValues = matieres.map(m => [examenId, m.id_matiere, m.coefficient]);
+        if(matiereValues.length > 0) {
+            await connection.query(sqlMatiereLink, [matiereValues]);
+        }
+        await connection.commit();
+        res.status(200).json({ message: 'Examen modifié.' });
+    } catch (err) {
+        await connection.rollback();
+        res.status(500).json({ message: 'Erreur serveur.' });
+    } finally {
+        connection.release();
+    }
+});
+// NOUVELLE ROUTE POUR LA PAGE "SUJETS SAUVEGARDÉS"
+app.get('/api/sujets-sauvegardes', authenticateJWT, async (req, res) => {
+    const { promotionId, parentExamId, typeExamen } = req.query;
+
+    let sql = `
+        SELECT
+            s.id,
+            s.titre,
+            s.created_at,
+            parent.type_examen,
+            p.nom_promotion,
+            parent.titre as titre_parent
+        FROM Examens s
+        JOIN Promotions p ON s.id_promotion = p.id
+        LEFT JOIN Examens parent ON s.id_parent_examen = parent.id
+        WHERE s.id_parent_examen IS NOT NULL
+    `;
+    const params = [];
+
+    if (promotionId && promotionId !== 'all' && promotionId !== '') {
+        sql += ' AND s.id_promotion = ?';
+        params.push(promotionId);
+    }
+    if (parentExamId && parentExamId !== 'all' && parentExamId !== '') {
+        sql += ' AND s.id_parent_examen = ?';
+        params.push(parentExamId);
+    }
+    if (typeExamen && typeExamen !== 'all' && typeExamen !== '') {
+        sql += ' AND parent.type_examen = ?';
+        params.push(typeExamen);
+    }
+
+    sql += ' ORDER BY s.created_at DESC';
+
+    try {
+        const [sujets] = await db.promise().query(sql, params);
+        res.status(200).json(sujets);
+    } catch (err) {
+        console.error("Erreur lors de la récupération des sujets sauvegardés:", err);
+        res.status(500).json({ message: "Erreur serveur." });
+    }
+});
+
+function trouverCombinaison(questionsDisponibles, pointsRestants, questionsUtilisees = new Set()) {
+    if (pointsRestants === 0) return [];
+    if (pointsRestants < 0 || questionsDisponibles.length === 0) return null;
+    const questionsMelangees = [...questionsDisponibles].sort(() => 0.5 - Math.random());
+    for (let i = 0; i < questionsMelangees.length; i++) {
+        const questionActuelle = questionsMelangees[i];
+        if (questionsUtilisees.has(questionActuelle.id)) continue;
+        const nouvellesQuestionsDisponibles = questionsMelangees.slice(i + 1);
+        const nouvellesQuestionsUtilisees = new Set(questionsUtilisees).add(questionActuelle.id);
+        const resultatRecursif = trouverCombinaison(nouvellesQuestionsDisponibles, pointsRestants - questionActuelle.points, nouvellesQuestionsUtilisees);
+        if (resultatRecursif !== null) {
+            return [questionActuelle, ...resultatRecursif];
+        }
+    }
+    return null;
+}
+
+// =======================================================================
+// === ROUTE MODIFIÉE POUR LA GÉNÉRATION DE SUJETS PAR MATIÈRE ===
+// =======================================================================
+app.post('/api/generate-exam-versions', authenticateJWT, authorizeRole(['admin', 'saisie']), async (req, res) => {
+    // 1. Récupérer la nouvelle structure de données du frontend
+    // On reçoit 'pointsPerMatiere' au lieu de 'totalPoints'
+    const { matiereIds, chapitreIds, pointsPerMatiere, numVersions } = req.body;
+    const requestedVersions = Number(numVersions) || 1;
+
+    // 2. Validation des nouvelles entrées
+    if (!Array.isArray(matiereIds) || matiereIds.length === 0 || !pointsPerMatiere || Object.keys(pointsPerMatiere).length === 0) {
+        return res.status(400).json({ message: "Veuillez fournir les matières, les points par matière et le nombre de versions." });
+    }
+
+    try {
+        // 3. Récupérer EN UNE SEULE FOIS toutes les questions potentiellement utiles
+        // C'est plus efficace que de faire une requête dans une boucle
+        let sql = `SELECT id, enonce, points, reponses, id_matiere, id_chapitre FROM Questions WHERE id_matiere IN (?)`;
+        const params = [matiereIds];
+
+        if (Array.isArray(chapitreIds) && chapitreIds.length > 0) {
+            sql += ` AND id_chapitre IN (?)`;
+            params.push(chapitreIds);
+        }
+
+        const [rawQuestions] = await db.promise().query(sql, params);
+        // On normalise les réponses comme pour les autres routes
+        const allAvailableQuestions = rawQuestions.map(normalizeReponses);
+
+        if (allAvailableQuestions.length === 0) {
+            return res.status(404).json({ message: "Aucune question trouvée pour les filtres sélectionnés." });
+        }
+
+        // 4. Boucle principale pour générer le nombre de versions (sujets) demandées
+        const versions = [];
+        const versionsSignatures = new Set(); // Pour s'assurer que les sujets générés sont uniques
+
+        for (let i = 0; i < requestedVersions; i++) {
+            let currentVersionQuestions = [];
+            let isVersionPossible = true;
+
+            // 5. Boucle INTERNE : pour chaque matière, on génère sa partie du sujet
+            for (const matiereId of matiereIds) {
+                const targetPoints = Number(pointsPerMatiere[matiereId]);
+
+                // Si pas de points définis pour cette matière, on passe à la suivante
+                if (!targetPoints || targetPoints <= 0) continue;
+
+                // On filtre les questions disponibles pour la matière en cours
+                const questionsForThisMatiere = allAvailableQuestions.filter(q => q.id_matiere == matiereId);
+
+                // On utilise la fonction existante pour trouver une combinaison
+                const combination = trouverCombinaison(questionsForThisMatiere, targetPoints);
+
+                // 6. Gestion des erreurs : si aucune combinaison n'est trouvée pour une matière
+                if (combination === null) {
+                    isVersionPossible = false;
+                    // On envoie un message d'erreur clair à l'utilisateur
+                    return res.status(400).json({
+                        message: `Impossible de créer une combinaison de ${targetPoints} points pour la matière (ID: ${matiereId}). Il n'y a probablement pas assez de questions ou les points ne correspondent pas.`
+                    });
+                }
+
+                // Si la combinaison est trouvée, on l'ajoute au sujet en cours de création
+                currentVersionQuestions.push(...combination);
+            }
+
+            // 7. Unicité de la version générée
+            if (isVersionPossible && currentVersionQuestions.length > 0) {
+                const signature = currentVersionQuestions.map(q => q.id).sort().join(',');
+                if (!versionsSignatures.has(signature)) {
+                    versions.push(currentVersionQuestions);
+                    versionsSignatures.add(signature);
+                }
+            }
+        }
+
+        // 8. Message final à l'utilisateur
+        if (versions.length < requestedVersions) {
+             return res.status(200).json({
+                 versions,
+                 message: `Avertissement : Seules ${versions.length} version(s) unique(s) sur les ${requestedVersions} demandées ont pu être générées. Essayez d'ajouter plus de questions.`
+             });
+        }
+
+        res.status(200).json({ versions });
+
+    } catch (err) {
+        console.error("Erreur lors de la génération des sujets:", err);
+        res.status(500).json({ message: err.message || "Une erreur est survenue sur le serveur." });
+    }
+});
+
+// ROUTE DE SAUVEGARDE MISE À JOUR ET FONCTIONNELLE
+// server.js
+
+// ... (tout le reste de votre fichier server.js est au-dessus) ...
+
+// ROUTE DE SAUVEGARDE ENTIÈREMENT MISE À JOUR
+app.post('/api/save-generated-exams', authenticateJWT, authorizeRole(['admin', 'saisie']), async (req, res) => {
+    // MODIFIÉ : On récupère exportConfig du body de la requête
+    const { id_examen_parent, versions, exportConfig } = req.body;
+
+    // MODIFIÉ : Validation pour inclure exportConfig
+    if (!id_examen_parent || !Array.isArray(versions) || versions.length === 0 || !exportConfig) {
+        return res.status(400).json({ message: "ID de l'examen parent, versions et configurations d'export sont requis." });
+    }
+
+    const connection = await db.promise().getConnection();
+    try {
+        await connection.beginTransaction();
+
+        const [parentExamRows] = await connection.execute('SELECT titre, id_promotion, type_examen FROM Examens WHERE id = ?', [id_examen_parent]);
+        if (parentExamRows.length === 0) {
+            await connection.rollback();
+            return res.status(404).json({ message: "L'examen parent n'a pas été trouvé." });
+        }
+        const parentExam = parentExamRows[0];
+        const savedExamsIds = [];
+
+        for (let i = 0; i < versions.length; i++) {
+            const version = versions[i];
+            const titreExamen = `${parentExam.titre} - Sujet ${i + 1}`;
+
+            // 1. Créer l'entrée pour le sujet dans la table Examens (inchangé)
+            const sqlExamen = 'INSERT INTO Examens (titre, type_examen, id_promotion, id_parent_examen) VALUES (?, ?, ?, ?)';
+            const [examenResult] = await connection.execute(sqlExamen, [titreExamen, parentExam.type_examen, parentExam.id_promotion, id_examen_parent]);
+            const newExamenId = examenResult.insertId;
+            savedExamsIds.push(newExamenId);
+
+            // 2. Lier les questions à ce nouveau sujet (inchangé)
+            const questionIds = version.map(q => [newExamenId, q.id]);
+            if (questionIds.length > 0) {
+                const sqlQuestions = 'INSERT INTO examen_questions (id_examen, id_question) VALUES ?';
+                await connection.query(sqlQuestions, [questionIds]);
+            }
+
+            // 3. NOUVEAU BLOC : Sauvegarder la durée et le coefficient pour chaque matière de ce sujet
+            // On récupère les ID uniques des matières présentes dans cette version du sujet
+            const matieresInVersion = [...new Set(version.map(q => q.id_matiere))];
+
+            // On prépare les données pour l'insertion dans `examen_matieres`
+            const matiereDetailsValues = matieresInVersion.map(matiereId => {
+                const config = exportConfig[matiereId];
+                if (!config) {
+                    // Sécurité : si la config manque pour une matière, on ne l'insère pas
+                    return null;
+                }
+                // L'ordre doit correspondre à la structure de la table : id_examen, id_matiere, coefficient, duree
+                return [newExamenId, matiereId, config.coefficient, config.duree];
+            }).filter(Boolean); // On retire les éventuelles valeurs nulles
+
+            if (matiereDetailsValues.length > 0) {
+                // On insère toutes les informations en une seule requête pour ce sujet
+                const sqlMatiereDetails = 'INSERT INTO examen_matieres (id_examen, id_matiere, coefficient, duree) VALUES ?';
+                await connection.query(sqlMatiereDetails, [matiereDetailsValues]);
+            }
+        }
+
+        await connection.commit();
+        res.status(201).json({ message: `${versions.length} sujets ont été créés et liés à l'examen "${parentExam.titre}".`, ids: savedExamsIds });
+
+    } catch (err) {
+        await connection.rollback();
+        console.error("Erreur lors de la sauvegarde des examens générés:", err);
+        res.status(500).json({ message: "Erreur serveur lors de la sauvegarde." });
+    } finally {
+        connection.release();
+    }
+});
+// AJOUTER CETTE NOUVELLE ROUTE DANS server.js
+
+// server.js
+
+// ... (tout le reste du fichier server.js est au-dessus) ...
+
+// GET un sujet sauvegardé spécifique avec toutes ses questions ET SES DÉTAILS PAR MATIÈRE
+app.get('/api/sujets-sauvegardes/:id', authenticateJWT, async (req, res) => {
+    const sujetId = req.params.id;
+
+    try {
+        // 1. Récupérer les informations de base du sujet (inchangé)
+        const sqlSujet = `
+            SELECT
+                s.id, s.titre, s.created_at,
+                parent.titre as titre_parent,
+                parent.type_examen
+            FROM Examens s
+            LEFT JOIN Examens parent ON s.id_parent_examen = parent.id
+            WHERE s.id = ? AND s.id_parent_examen IS NOT NULL
+        `;
+        const [sujetRows] = await db.promise().execute(sqlSujet, [sujetId]);
+
+        if (sujetRows.length === 0) {
+            return res.status(404).json({ message: "Sujet non trouvé." });
+        }
+        const sujetDetails = sujetRows[0];
+
+        // 2. Récupérer toutes les questions liées à ce sujet, avec leur matière (inchangé)
+        const sqlQuestions = `
+            SELECT q.*, m.nom_matiere
+            FROM examen_questions eq
+            JOIN Questions q ON eq.id_question = q.id
+            JOIN Matières m ON q.id_matiere = m.id
+            WHERE eq.id_examen = ?
+            ORDER BY m.nom_matiere, q.id
+        `;
+        const [questionRows] = await db.promise().execute(sqlQuestions, [sujetId]);
+        const questions = questionRows.map(normalizeReponses);
+
+        // 3. NOUVEAU : Récupérer les détails par matière (coefficient, durée) pour ce sujet
+        const sqlMatiereDetails = `
+            SELECT id_matiere, coefficient, duree
+            FROM examen_matieres
+            WHERE id_examen = ?
+        `;
+        const [matiereDetailsRows] = await db.promise().execute(sqlMatiereDetails, [sujetId]);
+
+        // On transforme le tableau de résultats en un objet plus facile à utiliser côté client
+        // La clé sera l'ID de la matière
+        const matiereDetailsMap = matiereDetailsRows.reduce((acc, row) => {
+            acc[row.id_matiere] = {
+                coefficient: row.coefficient,
+                duree: row.duree
+            };
+            return acc;
+        }, {});
+
+
+        // 4. Renvoyer un objet complet avec les nouvelles informations
+        res.status(200).json({
+            ...sujetDetails,
+            questions: questions,
+            matiereDetails: matiereDetailsMap // <-- NOUVELLE DONNÉE ENVOYÉE
+        });
+
+    } catch (err) {
+        console.error("Erreur lors de la récupération des détails du sujet:", err);
+        res.status(500).json({ message: "Erreur serveur." });
+    }
+});
+
+// ... (le reste de votre fichier server.js est en dessous) ...
+// ===============================================
+// DÉMARRAGE DU SERVEUR
+// ===============================================
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => {
+    console.log(`Serveur démarré sur le port ${PORT}`);
+});
