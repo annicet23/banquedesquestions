@@ -838,7 +838,9 @@ app.get('/api/sujets-sauvegardes/:id', authenticateJWT, async (req, res) => {
 // ===============================================
 // DÉMARRAGE DU SERVEUR
 // ===============================================
+// server.js (à la fin du fichier)
+
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-    console.log(`Serveur démarré sur le port ${PORT}`);
+app.listen(PORT, '0.0.0.0', () => { // <-- AJOUT DE '0.0.0.0' ICI
+    console.log(`Serveur démarré et accessible sur votre réseau au port ${PORT}`);
 });

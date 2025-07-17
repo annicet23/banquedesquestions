@@ -1,11 +1,14 @@
 import React, { useState } from 'react';
-import axios from 'axios';
+// import axios from 'axios'; // <- On n'a plus besoin d'importer axios directement
 import { useNavigate } from 'react-router-dom';
+
+// 1. MODIFICATION : On importe notre client API centralisé et pré-configuré
+import apiClient from '../services/apiClient'; // Assurez-vous que le chemin est correct
 
 const RegisterPage = () => {
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
-    const [role, setRole] = useState('saisie'); // Default role 'saisie', admin can choose
+    const [role, setRole] = useState('saisie');
     const [message, setMessage] = useState('');
     const [error, setError] = useState('');
     const navigate = useNavigate();
@@ -16,45 +19,51 @@ const RegisterPage = () => {
         setError('');
 
         try {
-            const token = localStorage.getItem('token');
-            if (!token) {
-                navigate('/login'); // Redirect if no token (should be caught by ProtectedRoute)
-                return;
-            }
-            // Send new user data to the backend's register API
-            await axios.post('http://localhost:5000/api/register', {
+            // Le token est récupéré et vérifié par le ProtectedRoute et par l'intercepteur de apiClient.
+            // Il n'est plus nécessaire de le gérer manuellement ici.
+
+            // 2. MODIFICATION MAJEURE : L'appel est simplifié et centralisé
+            //
+            // AVANT (URL en dur et header manuel) :
+            // await axios.post('http://localhost:5000/api/register', {
+            //     username,
+            //     password,
+            //     role
+            // }, {
+            //     headers: {
+            //         Authorization: `Bearer ${token}`
+            //     }
+            // });
+            //
+            // APRÈS (URL relative, le token est ajouté automatiquement) :
+            // `apiClient` connaît déjà la base "http://localhost:5000/api".
+            // Il suffit de lui donner la fin du chemin.
+            await apiClient.post('/register', {
                 username,
                 password,
                 role
-            }, {
-                // Although the /api/register route might not be directly protected by JWT middleware in your backend,
-                // sending the token is a good practice if this action is initiated by an authenticated admin.
-                // The ProtectedRoute for /register ensures a valid token is present before reaching this page.
-                headers: {
-                    Authorization: `Bearer ${token}`
-                }
             });
-            setMessage('Utilisateur enregistré avec succès !'); // Success message
-            // Clear form fields
+
+            setMessage('Utilisateur enregistré avec succès !');
             setUsername('');
             setPassword('');
-            setRole('saisie'); // Reset role for next registration
-            // Redirect to user management page after a short delay
+            setRole('saisie');
             setTimeout(() => {
                 setMessage('');
                 navigate('/users');
             }, 2000);
         } catch (err) {
             console.error('Erreur lors de l\'enregistrement:', err);
+            // La gestion d'erreur reste la même, ce qui est parfait.
             if (err.response && err.response.data && err.response.data.message) {
-                // Display specific error message from backend (e.g., "Username already taken")
                 setError(err.response.data.message);
             } else {
-                setError('Erreur lors de l\'enregistrement de l\'utilisateur.'); // Generic error
+                setError('Erreur lors de l\'enregistrement de l\'utilisateur.');
             }
         }
     };
 
+    // Le JSX reste exactement le même, aucune modification n'est nécessaire ici.
     return (
         <div className="container mx-auto p-4 flex justify-center items-center h-screen-minus-navbar">
             <div className="bg-white p-8 rounded shadow-md w-full max-w-md">
@@ -73,7 +82,7 @@ const RegisterPage = () => {
                             value={username}
                             onChange={(e) => setUsername(e.target.value)}
                             required
-                            autoComplete="new-username" // Added for autocomplete
+                            autoComplete="new-username"
                         />
                     </div>
                     <div className="mb-4">
@@ -87,7 +96,7 @@ const RegisterPage = () => {
                             value={password}
                             onChange={(e) => setPassword(e.target.value)}
                             required
-                            autoComplete="new-password" // Added for autocomplete
+                            autoComplete="new-password"
                         />
                     </div>
                     <div className="mb-6">
@@ -114,7 +123,7 @@ const RegisterPage = () => {
                         </button>
                         <button
                             type="button"
-                            onClick={() => navigate('/users')} // Cancel button redirects to user management
+                            onClick={() => navigate('/users')}
                             className="bg-gray-500 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline"
                         >
                             Annuler
