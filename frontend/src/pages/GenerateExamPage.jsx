@@ -1,14 +1,20 @@
-// src/pages/GenerateExamPage.js
+// --- START OF FILE GenerateExamPage.jsx (CORRIGÉ) ---
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import axios from 'axios';
+// import axios from 'axios'; // <-- MODIFIÉ
+import apiClient from '../config/api'; // <-- MODIFIÉ
 import { Settings, Zap, Save, AlertTriangle, CheckCircle, Printer, FileText, X, Eye, BarChart2 } from 'lucide-react';
 import { jsPDF } from "jspdf";
 import html2canvas from "html2canvas";
 import { Packer, Document, Paragraph, TextRun, PageBreak, Table, TableRow, TableCell, WidthType, AlignmentType, HeadingLevel } from 'docx';
 import { saveAs } from 'file-saver';
 
-// Composant pour la modale de chargement de l'exportation
+// ... (Tous les composants et fonctions utilitaires restent les mêmes)
+// ExportLoaderModal, groupQuestionsByMatiere, sanitizeXmlText, analyzeRepetitions,
+// PrintableExamMatiere, PrintableCorrectionMatiere, SubjectDetailModal...
+// Ces parties ne font pas d'appels réseau, donc pas de changement.
+
+// --- Composant pour la modale de chargement de l'exportation
 const ExportLoaderModal = () => {
     return (
         <div className="fixed inset-0 bg-black bg-opacity-60 flex justify-center items-center z-[100]">
@@ -237,14 +243,13 @@ const GenerateExamPage = () => {
     const [repetitionInfo, setRepetitionInfo] = useState(null);
 
     useEffect(() => {
-        const token = localStorage.getItem('token');
-        const headers = { headers: { Authorization: `Bearer ${token}` } };
         const fetchInitialData = async () => {
             try {
                 setLoading(true);
+                // <-- MODIFIÉ : Utilisation de apiClient
                 const [matieresRes, promotionsRes] = await Promise.all([
-                    axios.get('http://localhost:5000/api/matieres', headers),
-                    axios.get('http://localhost:5000/api/promotions', headers),
+                    apiClient.get('/matieres'),
+                    apiClient.get('/promotions'),
                 ]);
                 setAllMatieres(matieresRes.data);
                 setPromotions(promotionsRes.data);
@@ -255,10 +260,11 @@ const GenerateExamPage = () => {
     }, []);
 
     const loadParentExams = useCallback(async (promotionId) => {
-        const token = localStorage.getItem('token'); if (!token) return; setLoading(true); setError('');
+        setLoading(true); setError('');
         try {
             const params = new URLSearchParams(); if (promotionId) params.append('promotionId', promotionId);
-            const res = await axios.get(`http://localhost:5000/api/examens?${params.toString()}`, { headers: { Authorization: `Bearer ${token}` } });
+            // <-- MODIFIÉ : Utilisation de apiClient
+            const res = await apiClient.get(`/examens?${params.toString()}`);
             setParentExams(res.data);
         } catch (err) { setError("Erreur lors du chargement des modèles d'examen."); setParentExams([]); }
         finally { setLoading(false); }
@@ -269,9 +275,9 @@ const GenerateExamPage = () => {
     useEffect(() => {
         if (selectedMatiereIds.length === 0) { setAvailableChapitres([]); setSelectedChapitreIds([]); return; }
         const fetchChapitres = async () => {
-            const token = localStorage.getItem('token');
             try {
-                const res = await axios.get('http://localhost:5000/api/chapitres', { headers: { Authorization: `Bearer ${token}` } });
+                // <-- MODIFIÉ : Utilisation de apiClient
+                const res = await apiClient.get('/chapitres');
                 const filteredChapitres = res.data.filter(chap => selectedMatiereIds.includes(String(chap.id_matiere)));
                 setAvailableChapitres(filteredChapitres);
                 setSelectedChapitreIds(prev => prev.filter(chapId => filteredChapitres.some(c => String(c.id) === String(chapId))));
@@ -279,6 +285,38 @@ const GenerateExamPage = () => {
         };
         fetchChapitres();
     }, [selectedMatiereIds]);
+
+    const handleGenerate = async () => {
+        if (!selectedParentExamId || selectedMatiereIds.length === 0) { setError("Veuillez choisir un modèle d'examen et au moins une matière."); return; }
+        setLoading(true); setError(''); setSuccessMessage(''); setGeneratedVersions([]); setIsSaved(false); setRepetitionInfo(null);
+        try {
+            const payload = { matiereIds: selectedMatiereIds, chapitreIds: selectedChapitreIds, pointsPerMatiere: pointsPerMatiere, numVersions: Number(numVersions) };
+            // <-- MODIFIÉ : Utilisation de apiClient
+            const res = await apiClient.post('/generate-exam-versions', payload);
+            if (res.data.versions && res.data.versions.length > 0 && res.data.versions.some(v => v.length > 0)) {
+                setGeneratedVersions(res.data.versions);
+                setSuccessMessage(res.data.message || `${res.data.versions.length} sujet(s) ont été générés avec succès !`);
+                setRepetitionInfo(analyzeRepetitions(res.data.versions));
+            } else { setError(res.data.message || "Aucun sujet n'a pu être généré avec les critères actuels."); }
+        } catch (err) { setError(err.response?.data?.message || 'Une erreur est survenue lors de la génération.'); }
+        finally { setLoading(false); }
+    };
+
+    const handleSave = async () => {
+        if (!selectedParentExamId || generatedVersions.length === 0) { setError("Impossible de sauvegarder : aucun modèle d'examen ou sujet généré."); return; }
+        setLoading(true); setError(''); setSuccessMessage('');
+        try {
+            const payload = { id_examen_parent: selectedParentExamId, versions: generatedVersions ,exportConfig: exportConfig };
+            // <-- MODIFIÉ : Utilisation de apiClient
+            await apiClient.post('/save-generated-exams', payload);
+            setSuccessMessage('Sujets enregistrés avec succès dans la base de données !');
+            setIsSaved(true);
+        } catch (err) { setError(err.response?.data?.message || 'Une erreur est survenue lors de la sauvegarde.'); }
+        finally { setLoading(false); }
+    };
+    
+    // ... Le reste des fonctions (gestion PDF, Word, state local) ne change pas ...
+    // handlePDFExport, handleWordExport, handleMatiereChange, etc. sont OK.
 
     const handlePDFExport = async () => {
         setIsExportModalOpen(false); setExporting(true); setError('');
@@ -456,36 +494,7 @@ const GenerateExamPage = () => {
         }));
     };
 
-
-    const handleGenerate = async () => {
-        if (!selectedParentExamId || selectedMatiereIds.length === 0) { setError("Veuillez choisir un modèle d'examen et au moins une matière."); return; }
-        setLoading(true); setError(''); setSuccessMessage(''); setGeneratedVersions([]); setIsSaved(false); setRepetitionInfo(null);
-        try {
-            const token = localStorage.getItem('token');
-            const payload = { matiereIds: selectedMatiereIds, chapitreIds: selectedChapitreIds, pointsPerMatiere: pointsPerMatiere, numVersions: Number(numVersions) };
-            const res = await axios.post('http://localhost:5000/api/generate-exam-versions', payload, { headers: { Authorization: `Bearer ${token}` } });
-            if (res.data.versions && res.data.versions.length > 0 && res.data.versions.some(v => v.length > 0)) {
-                setGeneratedVersions(res.data.versions);
-                setSuccessMessage(res.data.message || `${res.data.versions.length} sujet(s) ont été générés avec succès !`);
-                setRepetitionInfo(analyzeRepetitions(res.data.versions));
-            } else { setError(res.data.message || "Aucun sujet n'a pu être généré avec les critères actuels."); }
-        } catch (err) { setError(err.response?.data?.message || 'Une erreur est survenue lors de la génération.'); }
-        finally { setLoading(false); }
-    };
-
-    const handleSave = async () => {
-        if (!selectedParentExamId || generatedVersions.length === 0) { setError("Impossible de sauvegarder : aucun modèle d'examen ou sujet généré."); return; }
-        setLoading(true); setError(''); setSuccessMessage('');
-        try {
-            const token = localStorage.getItem('token');
-            const payload = { id_examen_parent: selectedParentExamId, versions: generatedVersions ,exportConfig: exportConfig };
-            await axios.post('http://localhost:5000/api/save-generated-exams', payload, { headers: { Authorization: `Bearer ${token}` } });
-            setSuccessMessage('Sujets enregistrés avec succès dans la base de données !');
-            setIsSaved(true);
-        } catch (err) { setError(err.response?.data?.message || 'Une erreur est survenue lors de la sauvegarde.'); }
-        finally { setLoading(false); }
-    };
-
+    // ... Le JSX est déjà correct ...
     return (
         <>
             {exporting && <ExportLoaderModal />}

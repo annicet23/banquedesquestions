@@ -1,12 +1,18 @@
+// --- START OF FILE frontend/src/components/Navbar.jsx ---
+
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, NavLink, useNavigate } from 'react-router-dom';
-import { LogOut, Menu, X, ChevronDown, User, Settings, FileText } from 'lucide-react'; // Ajout de FileText
+import { LogOut, Menu, X, ChevronDown, User, Settings, FileText } from 'lucide-react';
 
 const Navbar = () => {
     const navigate = useNavigate();
-    const [isLoggedIn, setIsLoggedIn] = useState(false);
-    const [username, setUsername] = useState('');
-    const [userRole, setUserRole] = useState('');
+
+    // --- MODIFICATION 1 : État initial ---
+    // On initialise l'état en lisant directement le localStorage.
+    // `!!` convertit la chaîne (ou null) en un vrai booléen.
+    const [isLoggedIn, setIsLoggedIn] = useState(!!localStorage.getItem('token'));
+    const [username, setUsername] = useState(localStorage.getItem('username') || '');
+    const [userRole, setUserRole] = useState(localStorage.getItem('userRole') || '');
 
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
     const [isGestionMenuOpen, setIsGestionMenuOpen] = useState(false);
@@ -15,7 +21,9 @@ const Navbar = () => {
     const profileMenuRef = useRef(null);
     const gestionMenuRef = useRef(null);
 
+    // --- MODIFICATION 2 : Écouteur d'événements ---
     useEffect(() => {
+        // Cette fonction met à jour l'état de la Navbar en lisant le localStorage
         const checkLoginStatus = () => {
             const token = localStorage.getItem('token');
             if (token) {
@@ -27,13 +35,21 @@ const Navbar = () => {
             }
         };
 
+        // On exécute une première fois au cas où
         checkLoginStatus();
-        window.addEventListener('storage', checkLoginStatus); // Écoute les changements dans le localStorage
 
+        // On écoute l'événement 'loginSuccess' envoyé par la page de connexion
+        window.addEventListener('loginSuccess', checkLoginStatus);
+        
+        // On écoute aussi l'événement 'storage' pour synchroniser entre les onglets
+        window.addEventListener('storage', checkLoginStatus);
+
+        // Nettoyage des écouteurs pour éviter les fuites de mémoire
         return () => {
+            window.removeEventListener('loginSuccess', checkLoginStatus);
             window.removeEventListener('storage', checkLoginStatus);
         };
-    }, []);
+    }, []); // Le tableau vide [] signifie que cet effet ne s'exécute qu'une fois au montage.
 
 
     useEffect(() => {
@@ -61,10 +77,13 @@ const Navbar = () => {
     const navLinkClass = ({ isActive }) =>
         `text-gray-300 hover:text-white transition-colors px-3 py-2 rounded-md text-sm font-medium ${isActive ? 'bg-gray-700 text-white' : ''}`;
 
+    // Si l'utilisateur n'est pas connecté, on n'affiche rien.
+    // Grâce aux modifications, cet état sera correct dès le premier rendu.
     if (!isLoggedIn) {
         return null;
     }
 
+    // Le reste du code JSX est identique
     return (
         <nav className="bg-gray-900 border-b border-gray-700 fixed top-0 left-0 right-0 z-50">
             <div className="w-full px-4 sm:px-6 lg:px-8">
@@ -92,7 +111,6 @@ const Navbar = () => {
                                             <Link to="/questions" onClick={() => setIsGestionMenuOpen(false)} className="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-700">Questions</Link>
                                             <Link to="/promotions" onClick={() => setIsGestionMenuOpen(false)} className="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-700">Promotions</Link>
                                             <div className="border-t border-gray-700 my-1"></div>
-                                            {/* LIEN AJOUTÉ ICI */}
                                             <Link to="/sujets-sauvegardes" onClick={() => setIsGestionMenuOpen(false)} className="flex items-center px-4 py-2 text-sm text-gray-300 hover:bg-gray-700">
                                                 <FileText size={16} className="mr-2"/> Sujets Sauvegardés
                                             </Link>
@@ -146,14 +164,14 @@ const Navbar = () => {
             {isMobileMenuOpen && (
                 <div className="md:hidden">
                     <div className="px-2 pt-2 pb-3 space-y-1 sm:px-3">
-                        <NavLink to="/dashboard" className={navLinkClass}>Dashboard</NavLink>
-                        <NavLink to="/matieres" className={navLinkClass}>Matières</NavLink>
-                        <NavLink to="/chapitres" className={navLinkClass}>Chapitres</NavLink>
-                        <NavLink to="/questions" className={navLinkClass}>Questions</NavLink>
-                        <NavLink to="/promotions" className={navLinkClass}>Promotions</NavLink>
-                        <NavLink to="/examens" className={navLinkClass}>Modèles d'Examen</NavLink>
-                        <NavLink to="/generate-exam" className={navLinkClass}>Générateur</NavLink>
-                        <NavLink to="/sujets-sauvegardes" className={navLinkClass}>Sujets Sauvegardés</NavLink>
+                        <NavLink to="/dashboard" onClick={() => setIsMobileMenuOpen(false)} className={navLinkClass}>Dashboard</NavLink>
+                        <NavLink to="/matieres" onClick={() => setIsMobileMenuOpen(false)} className={navLinkClass}>Matières</NavLink>
+                        <NavLink to="/chapitres" onClick={() => setIsMobileMenuOpen(false)} className={navLinkClass}>Chapitres</NavLink>
+                        <NavLink to="/questions" onClick={() => setIsMobileMenuOpen(false)} className={navLinkClass}>Questions</NavLink>
+                        <NavLink to="/promotions" onClick={() => setIsMobileMenuOpen(false)} className={navLinkClass}>Promotions</NavLink>
+                        <NavLink to="/examens" onClick={() => setIsMobileMenuOpen(false)} className={navLinkClass}>Modèles d'Examen</NavLink>
+                        <NavLink to="/generate-exam" onClick={() => setIsMobileMenuOpen(false)} className={navLinkClass}>Générateur</NavLink>
+                        <NavLink to="/sujets-sauvegardes" onClick={() => setIsMobileMenuOpen(false)} className={navLinkClass}>Sujets Sauvegardés</NavLink>
                     </div>
                     <div className="pt-4 pb-3 border-t border-gray-700">
                         <div className="flex items-center px-5">
@@ -165,7 +183,7 @@ const Navbar = () => {
                         </div>
                         <div className="mt-3 px-2 space-y-1">
                              {userRole === 'admin' && (
-                                <Link to="/users" className="block px-3 py-2 rounded-md text-base font-medium text-gray-400 hover:text-white hover:bg-gray-700">Utilisateurs</Link>
+                                <Link to="/users" onClick={() => setIsMobileMenuOpen(false)} className="block px-3 py-2 rounded-md text-base font-medium text-gray-400 hover:text-white hover:bg-gray-700">Utilisateurs</Link>
                             )}
                             <button onClick={handleLogout} className="w-full text-left block px-3 py-2 rounded-md text-base font-medium text-red-400 hover:text-white hover:bg-gray-700">
                                 Déconnexion

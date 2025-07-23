@@ -1,50 +1,27 @@
-// src/context/AuthContext.js
-import React, { createContext, useState, useEffect, useContext } from 'react';
-import { jwtDecode } from 'jwt-decode';
-import LoadingScreen from '../components/LoadingScreen';
+// frontend/src/context/AuthContext.jsx
+import React, { createContext, useState, useContext, useEffect } from 'react';
 
 const AuthContext = createContext(null);
 
 export const AuthProvider = ({ children }) => {
     const [user, setUser] = useState(null);
-    const [isAuthLoading, setIsAuthLoading] = useState(true);
+    const [isLoading, setIsLoading] = useState(true);
 
     useEffect(() => {
-        // Au premier chargement de l'app, on vérifie si un token valide existe
-        try {
-            const token = localStorage.getItem('token');
-            if (token) {
-                const decodedToken = jwtDecode(token);
-                // Vérifier si le token est expiré
-                if (decodedToken.exp * 1000 > Date.now()) {
-                    setUser({
-                        username: decodedToken.username,
-                        role: decodedToken.role
-                    });
-                } else {
-                    // Le token est expiré, on nettoie
-                    localStorage.clear();
-                }
-            }
-        } catch (error) {
-            console.error("Erreur lors de la vérification initiale du token:", error);
-            localStorage.clear();
-        } finally {
-            // Quoi qu'il arrive, la vérification est terminée
-            setIsAuthLoading(false);
+        const token = localStorage.getItem('token');
+        if (token) {
+            const username = localStorage.getItem('username');
+            const role = localStorage.getItem('userRole');
+            setUser({ username, role, token });
         }
+        setIsLoading(false);
     }, []);
 
-    const login = (token) => {
-        const decodedToken = jwtDecode(token);
-        localStorage.setItem('token', token);
-        // Stockez aussi username et role pour la compatibilité avec votre ancien code si besoin, mais la source de vérité sera le token
-        localStorage.setItem('username', decodedToken.username);
-        localStorage.setItem('userRole', decodedToken.role);
-        setUser({
-            username: decodedToken.username,
-            role: decodedToken.role
-        });
+    const login = (userData) => {
+        localStorage.setItem('token', userData.token);
+        localStorage.setItem('username', userData.username);
+        localStorage.setItem('userRole', userData.role);
+        setUser(userData);
     };
 
     const logout = () => {
@@ -52,21 +29,15 @@ export const AuthProvider = ({ children }) => {
         setUser(null);
     };
 
-    // Pendant que l'on vérifie l'état de connexion, on affiche le loader
-    if (isAuthLoading) {
-        return <LoadingScreen />;
-    }
-
-    const value = { user, login, logout, isLoggedIn: !!user };
+    const value = { user, isLoggedIn: !!user, isLoading, login, logout };
 
     return (
         <AuthContext.Provider value={value}>
-            {children}
+            {!isLoading && children}
         </AuthContext.Provider>
     );
 };
 
-// Hook personnalisé pour utiliser facilement le contexte
 export const useAuth = () => {
     return useContext(AuthContext);
 };

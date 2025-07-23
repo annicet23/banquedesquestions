@@ -1,10 +1,11 @@
-// src/pages/ExamenManagementPage.jsx
+// --- START OF FILE ExamenManagementPage.jsx (CORRIGÉ) ---
 
 import React, { useState, useEffect, Fragment, useRef } from 'react';
-import axios from 'axios';
+// import axios from 'axios'; // <-- MODIFIÉ : On supprime axios
 import { useNavigate } from 'react-router-dom';
-import { Plus, MoreVertical, Pencil, Trash2, ListPlus, X } from 'lucide-react';
+import { Plus, Pencil, Trash2, ListPlus, X } from 'lucide-react';
 import { Dialog, Transition } from '@headlessui/react';
+import apiClient from '../config/api'; // <-- MODIFIÉ : On importe le client centralisé
 
 const ExamenManagementPage = () => {
     const [examens, setExamens] = useState([]);
@@ -21,24 +22,22 @@ const ExamenManagementPage = () => {
     const [formState, setFormState] = useState({ titre: '', description: '', type_examen: 'Examen', id_promotion: '' });
     const [subjectsInExam, setSubjectsInExam] = useState([]);
 
-    const [openDropdownId, setOpenDropdownId] = useState(null);
-    const dropdownRef = useRef(null);
     const navigate = useNavigate();
 
     useEffect(() => {
         const fetchBaseData = async () => {
-            const token = localStorage.getItem('token');
             try {
+                // <-- MODIFIÉ : Plus besoin du token, apiClient gère
                 const [promotionsRes, matieresRes] = await Promise.all([
-                    axios.get('http://localhost:5000/api/promotions', { headers: { Authorization: `Bearer ${token}` } }),
-                    axios.get('http://localhost:5000/api/matieres', { headers: { Authorization: `Bearer ${token}` } }),
+                    apiClient.get('/promotions'),
+                    apiClient.get('/matieres'),
                 ]);
                 setAllPromotions(promotionsRes.data);
                 setAllMatieres(matieresRes.data);
                 if (promotionsRes.data.length > 0) {
                     setSelectedPromotionId(promotionsRes.data[0].id);
                 } else {
-                    setLoading(false); // No promotions, stop loading
+                    setLoading(false);
                 }
             } catch (err) {
                 setError('Impossible de charger les données de base.');
@@ -53,8 +52,8 @@ const ExamenManagementPage = () => {
         const fetchExams = async () => {
             setLoading(true);
             try {
-                const token = localStorage.getItem('token');
-                const response = await axios.get(`http://localhost:5000/api/examens?promotionId=${selectedPromotionId}`, { headers: { Authorization: `Bearer ${token}` } });
+                // <-- MODIFIÉ : On utilise apiClient
+                const response = await apiClient.get(`/examens?promotionId=${selectedPromotionId}`);
                 setExamens(response.data);
             } catch (err) {
                 setError('Impossible de charger les examens.');
@@ -68,8 +67,8 @@ const ExamenManagementPage = () => {
     const openModal = async (examen = null) => {
         setEditingExamen(examen);
         if (examen) {
-            const token = localStorage.getItem('token');
-            const { data } = await axios.get(`http://localhost:5000/api/examens/${examen.id}`, { headers: { Authorization: `Bearer ${token}` } });
+            // <-- MODIFIÉ : On utilise apiClient
+            const { data } = await apiClient.get(`/examens/${examen.id}`);
             setFormState({ titre: data.titre, description: data.description || '', type_examen: data.type_examen, id_promotion: data.id_promotion });
             setSubjectsInExam(data.matieres.map(m => ({ id_matiere: m.id_matiere, nom_matiere: m.nom_matiere, coefficient: m.coefficient })));
         } else {
@@ -94,16 +93,16 @@ const ExamenManagementPage = () => {
         if (subjectsInExam.length === 0 || !formState.id_promotion) {
             setError('Promotion et au moins une matière sont requises.'); return;
         }
-        const token = localStorage.getItem('token');
         const payload = { ...formState, matieres: subjectsInExam.map(({ id_matiere, coefficient }) => ({ id_matiere, coefficient })) };
-        const url = editingExamen ? `http://localhost:5000/api/examens/${editingExamen.id}` : 'http://localhost:5000/api/examens';
+        const url = editingExamen ? `/examens/${editingExamen.id}` : '/examens'; // <-- MODIFIÉ : URL relative
         const method = editingExamen ? 'put' : 'post';
         try {
-            await axios[method](url, payload, { headers: { Authorization: `Bearer ${token}` } });
+            // <-- MODIFIÉ : On utilise apiClient[method]
+            await apiClient[method](url, payload);
             setMessage(`Opération réussie !`);
             closeModal();
             // Refetch exams for the current promotion
-            const response = await axios.get(`http://localhost:5000/api/examens?promotionId=${selectedPromotionId}`, { headers: { Authorization: `Bearer ${token}` } });
+            const response = await apiClient.get(`/examens?promotionId=${selectedPromotionId}`); // <-- MODIFIÉ
             setExamens(response.data);
         } catch (err) {
             setError(err.response?.data?.message || 'Une erreur est survenue.');
@@ -112,13 +111,14 @@ const ExamenManagementPage = () => {
 
     const handleDelete = async (examenId) => {
         if (!window.confirm('Voulez-vous vraiment supprimer cet examen ?')) return;
-        const token = localStorage.getItem('token');
-        await axios.delete(`http://localhost:5000/api/examens/${examenId}`, { headers: { Authorization: `Bearer ${token}` } });
+        // <-- MODIFIÉ : On utilise apiClient
+        await apiClient.delete(`/examens/${examenId}`);
         // Refetch exams
-        const response = await axios.get(`http://localhost:5000/api/examens?promotionId=${selectedPromotionId}`, { headers: { Authorization: `Bearer ${token}` } });
+        const response = await apiClient.get(`/examens?promotionId=${selectedPromotionId}`); // <-- MODIFIÉ
         setExamens(response.data);
     };
 
+    // ... Le reste du JSX est déjà correct ...
     return (
         <div className="p-4 sm:p-6 lg:p-8 bg-gray-50 min-h-screen">
             <div className="max-w-7xl mx-auto">

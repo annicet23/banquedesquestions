@@ -1,7 +1,10 @@
+// --- START OF FILE frontend/src/pages/LoginPage.jsx (VERSION FINALE AVEC CONTEXT) ---
+
 import React, { useState } from 'react';
-import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import { LogIn } from 'lucide-react';
+import apiClient from '../config/api';
+import { useAuth } from '../context/AuthContext'; // <--- IMPORT CRUCIAL
 
 const LoginPage = () => {
     const [username, setUsername] = useState('');
@@ -9,6 +12,7 @@ const LoginPage = () => {
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
     const navigate = useNavigate();
+    const { login } = useAuth(); // <--- ON RÉCUPÈRE LA FONCTION "login" DU CONTEXTE
 
     const handleLogin = async (e) => {
         e.preventDefault();
@@ -16,14 +20,18 @@ const LoginPage = () => {
         setLoading(true);
 
         try {
-            const response = await axios.post('http://localhost:5000/api/login', {
+            const response = await apiClient.post('/login', {
                 username,
                 password,
             });
-            localStorage.setItem('token', response.data.token);
-            localStorage.setItem('userRole', response.data.role);
-            localStorage.setItem('username', response.data.username);
+
+            // --- LA SEULE ACTION NÉCESSAIRE ---
+            // On appelle la fonction `login` du contexte.
+            // Elle s'occupera du localStorage ET de mettre à jour l'état global de l'app.
+            login(response.data);
+
             navigate('/dashboard');
+
         } catch (err) {
             console.error('Erreur de connexion:', err);
             setError(err.response?.data?.message || 'Erreur de connexion. Veuillez réessayer.');
@@ -32,10 +40,10 @@ const LoginPage = () => {
         }
     };
 
+    // Le JSX reste identique
     return (
         <div className="flex items-center justify-center min-h-screen bg-gray-100 p-4">
             <div className="flex w-full max-w-5xl mx-auto overflow-hidden bg-white rounded-2xl shadow-2xl">
-
                 {/* --- Section Formulaire (Gauche) --- */}
                 <div className="w-full md:w-1/2 p-8 md:p-12">
                     <div className="text-left mb-10">
@@ -94,8 +102,8 @@ const LoginPage = () => {
                 {/* --- Section Image (Droite) --- */}
                 <div className="hidden md:block w-1/2">
                     <img
-                        src="\eg.png"
-                        alt="Team working in an office"
+                        src="/eg.png"
+                        alt="Illustration de concept de sécurité"
                         className="object-cover w-full h-full"
                     />
                 </div>

@@ -1,8 +1,11 @@
+// --- START OF FILE MatiereManagementPage.jsx (CORRIGÉ) ---
+
 import React, { useState, useEffect, Fragment, useRef } from 'react';
-import axios from 'axios';
+// import axios from 'axios'; // <-- MODIFIÉ
 import { useNavigate } from 'react-router-dom';
 import { Plus, MoreVertical, Pencil, Trash, BookOpen, PlusCircle } from 'lucide-react';
 import { Dialog, Transition } from '@headlessui/react';
+import apiClient from '../config/api'; // <-- MODIFIÉ
 
 const MatiereManagementPage = () => {
     const [matieres, setMatieres] = useState([]);
@@ -16,19 +19,16 @@ const MatiereManagementPage = () => {
     const [formState, setFormState] = useState({ nom_matiere: '', abreviation: '', description: '' });
 
     const [openDropdownId, setOpenDropdownId] = useState(null);
-    const dropdownRef = useRef(null); // <-- NOUVEAU: Réf pour le menu déroulant
+    const dropdownRef = useRef(null);
     const navigate = useNavigate();
 
-    // Fetch data au chargement
     useEffect(() => {
         fetchMatieres();
     }, []);
 
-    // NOUVEAU: Hook pour fermer le dropdown au clic extérieur
     useEffect(() => {
         const handleClickOutside = (event) => {
             if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
-                // Vérifie aussi que le clic n'est pas sur un bouton "..."
                 if (!event.target.closest('.actions-trigger-button')) {
                     setOpenDropdownId(null);
                 }
@@ -43,10 +43,8 @@ const MatiereManagementPage = () => {
     const fetchMatieres = async () => {
         setLoading(true);
         try {
-            const token = localStorage.getItem('token');
-            const response = await axios.get('http://localhost:5000/api/matieres', {
-                headers: { Authorization: `Bearer ${token}` }
-            });
+            // <-- MODIFIÉ : Utilisation de apiClient
+            const response = await apiClient.get('/matieres');
             setMatieres(response.data);
         } catch (err) {
             setError('Impossible de charger les matières.');
@@ -82,12 +80,12 @@ const MatiereManagementPage = () => {
 
     const handleFormSubmit = async (e) => {
         e.preventDefault();
-        const token = localStorage.getItem('token');
-        const url = editingMatiere ? `http://localhost:5000/api/matieres/${editingMatiere.id}` : 'http://localhost:5000/api/matieres';
+        const url = editingMatiere ? `/matieres/${editingMatiere.id}` : '/matieres'; // <-- MODIFIÉ
         const method = editingMatiere ? 'put' : 'post';
 
         try {
-            await axios[method](url, formState, { headers: { Authorization: `Bearer ${token}` } });
+            // <-- MODIFIÉ : Utilisation de apiClient[method]
+            await apiClient[method](url, formState);
             setMessage(`Matière ${editingMatiere ? 'modifiée' : 'ajoutée'} avec succès !`);
             closeModal();
             fetchMatieres();
@@ -100,8 +98,8 @@ const MatiereManagementPage = () => {
     const handleDelete = async (matiereId) => {
         if (!window.confirm('Voulez-vous vraiment supprimer cette matière et tous ses chapitres ?')) return;
         try {
-            const token = localStorage.getItem('token');
-            await axios.delete(`http://localhost:5000/api/matieres/${matiereId}`, { headers: { Authorization: `Bearer ${token}` } });
+            // <-- MODIFIÉ : Utilisation de apiClient
+            await apiClient.delete(`/matieres/${matiereId}`);
             setMessage('Matière supprimée avec succès !');
             fetchMatieres();
             setTimeout(() => setMessage(''), 3000);
@@ -120,6 +118,7 @@ const MatiereManagementPage = () => {
 
     if (loading) return <div className="p-8 text-center">Chargement...</div>;
 
+    // ... Le JSX est déjà correct et ne change pas ...
     return (
         <div className="p-4 sm:p-6 lg:p-8 bg-gray-50 min-h-screen">
             <div className="max-w-7xl mx-auto">
@@ -183,7 +182,6 @@ const MatiereManagementPage = () => {
                 </div>
             </div>
 
-            {/* Modal pour Ajouter/Modifier */}
             <Transition appear show={isModalOpen} as={Fragment}>
                 <Dialog as="div" className="relative z-30" onClose={closeModal}>
                     <Transition.Child as={Fragment} enter="ease-out duration-300" enterFrom="opacity-0" enterTo="opacity-100" leave="ease-in duration-200" leaveFrom="opacity-100" leaveTo="opacity-0">

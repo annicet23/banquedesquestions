@@ -1,18 +1,16 @@
-// src/pages/PageSujet.js (FICHIER MIS À JOUR)
+// --- START OF FILE PageSujet.jsx (CORRIGÉ) ---
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import axios from 'axios';
+// import axios from 'axios'; // <-- MODIFIÉ
 import { Filter, Download, List, Clock, FolderOpen, BookOpen, Printer, X, FileText } from 'lucide-react';
-
-// --- BIBLIOTHÈQUES D'EXPORT (comme dans GenerateExamPage) ---
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
+import apiClient from '../config/api'; // <-- MODIFIÉ
 
-// --- FONCTIONS ET COMPOSANTS UTILITAIRES (copiés depuis GenerateExamPage.js) ---
-
+// ... Les composants et fonctions utilitaires qui ne font pas d'appels API restent inchangés ...
+// (groupQuestionsByMatiere, PrintableExamMatiere, PrintableCorrectionMatiere)
 const groupQuestionsByMatiere = (questions) => {
     if (!Array.isArray(questions)) return {};
-    // On se base sur le champ `nom_matiere` directement disponible
     return questions.reduce((acc, question) => {
         const matiereName = question.nom_matiere || 'Matière Inconnue';
         if (!acc[matiereName]) {
@@ -23,25 +21,16 @@ const groupQuestionsByMatiere = (questions) => {
     }, {});
 };
 
-// Composant pour l'impression du sujet (invisible)
-// PageSujet.js
-
-// ...
-
 const PrintableExamMatiere = React.forwardRef(({ examData }, ref) => {
     if (!examData) return null;
-    // MODIFIÉ : On extrait duree et coefficient des données de l'examen
     const { matiereName, questions, sujetDetails, duree, coefficient } = examData;
     const tableStyle = { width: '100%', borderCollapse: 'collapse', border: '2px solid black', fontFamily: 'Arial, sans-serif', fontSize: '12pt' };
     const cellStyle = { border: '1px solid black', padding: '8px' };
     const centerCellStyle = { ...cellStyle, textAlign: 'center' };
-
-    // Calcule du total des points pour cette matière spécifique
     const totalPointsMatiere = questions.reduce((sum, q) => sum + (q.points || 0), 0);
 
     return (
         <div ref={ref} style={{ width: '210mm', minHeight: '297mm', boxSizing: 'border-box', padding: '15mm', backgroundColor: 'white', color: 'black' }}>
-            {/* EN-TÊTE MIS À JOUR */}
             <table style={tableStyle}>
                 <tbody>
                     <tr>
@@ -59,8 +48,6 @@ const PrintableExamMatiere = React.forwardRef(({ examData }, ref) => {
             </table>
             <div style={{ textAlign: 'right', fontWeight: 'bold', margin: '15px 0', fontSize: '11pt' }}>NOTE TOTALE : {totalPointsMatiere} / {totalPointsMatiere}</div>
             <div style={{ textAlign: 'center', margin: '10px 0 20px 0' }}><h2 style={{ textDecoration: 'underline', fontWeight: 'bold', fontSize: '1.3em' }}>-SUJET-</h2></div>
-
-            {/* Le reste du composant (liste des questions) est inchangé */}
             <div style={{ fontFamily: 'Arial, sans-serif', fontSize: '11pt' }}>
                 {questions.map((q, qIndex) => (
                     <div key={q.id || qIndex} style={{ marginBottom: '12px', display: 'flex' }}>
@@ -73,9 +60,6 @@ const PrintableExamMatiere = React.forwardRef(({ examData }, ref) => {
     );
 });
 
-// ...
-
-// Composant pour l'impression du corrigé (invisible)
 const PrintableCorrectionMatiere = React.forwardRef(({ examData }, ref) => {
     if (!examData) return null;
     const { matiereName, questions, sujetDetails } = examData;
@@ -117,19 +101,12 @@ const PrintableCorrectionMatiere = React.forwardRef(({ examData }, ref) => {
 
 
 const PageSujet = () => {
-    // --- États existants ---
     const [sujets, setSujets] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const [promotions, setPromotions] = useState([]);
     const [parentExams, setParentExams] = useState([]);
-    const [filtres, setFiltres] = useState({
-        promotionId: '',
-        parentExamId: '',
-        typeExamen: '',
-    });
-
-    // --- NOUVEAUX ÉTATS POUR L'EXPORT PDF ---
+    const [filtres, setFiltres] = useState({ promotionId: '', parentExamId: '', typeExamen: '' });
     const [isExportModalOpen, setIsExportModalOpen] = useState(false);
     const [selectedSujetForExport, setSelectedSujetForExport] = useState(null);
     const [exporting, setExporting] = useState(false);
@@ -138,14 +115,11 @@ const PageSujet = () => {
     const printableRef = useRef();
     const correctionPrintableRef = useRef();
 
-
-    // ... (fonctions loadFilterData, loadSujets, useEffect, handleFilterChange, handleApplyFilters, handleExport [CSV] restent identiques) ...
-     const loadFilterData = useCallback(async (token) => {
-        const headers = { headers: { Authorization: `Bearer ${token}` } };
+    const loadFilterData = useCallback(async () => { // <-- MODIFIÉ : plus besoin de passer le token
         try {
             const [promoRes, examsRes] = await Promise.all([
-                axios.get('http://localhost:5000/api/promotions', headers),
-                axios.get('http://localhost:5000/api/examens', headers)
+                apiClient.get('/promotions'), // <-- MODIFIÉ
+                apiClient.get('/examens')      // <-- MODIFIÉ
             ]);
             setPromotions(promoRes.data);
             setParentExams(examsRes.data);
@@ -154,7 +128,7 @@ const PageSujet = () => {
         }
     }, []);
 
-    const loadSujets = useCallback(async (token) => {
+    const loadSujets = useCallback(async () => { // <-- MODIFIÉ : plus besoin de passer le token
         setLoading(true);
         setError('');
         try {
@@ -163,9 +137,8 @@ const PageSujet = () => {
             if (filtres.parentExamId) params.append('parentExamId', filtres.parentExamId);
             if (filtres.typeExamen) params.append('typeExamen', filtres.typeExamen);
 
-            const response = await axios.get(`http://localhost:5000/api/sujets-sauvegardes?${params.toString()}`, {
-                headers: { Authorization: `Bearer ${token}` }
-            });
+            // <-- MODIFIÉ
+            const response = await apiClient.get(`/sujets-sauvegardes?${params.toString()}`);
             setSujets(response.data);
         } catch (err) {
             setError('Impossible de charger les sujets sauvegardés.');
@@ -178,15 +151,14 @@ const PageSujet = () => {
     useEffect(() => {
         const token = localStorage.getItem('token');
         if (token) {
-            loadFilterData(token);
-            loadSujets(token);
+            loadFilterData();
+            loadSujets();
         } else {
             setError("Authentification requise.");
             setLoading(false);
         }
     }, [loadFilterData, loadSujets]);
 
-    // --- NOUVEAUX USEEFFECTS POUR LA GÉNÉRATION PDF ---
     useEffect(() => {
         if (dataToPrint && printableRef.current) {
             (async () => {
@@ -218,8 +190,7 @@ const PageSujet = () => {
     };
 
     const handleApplyFilters = () => {
-         const token = localStorage.getItem('token');
-         if (token) loadSujets(token);
+         loadSujets();
     }
 
     const handleExportCSV = () => {
@@ -238,7 +209,6 @@ const PageSujet = () => {
         document.body.removeChild(link);
     };
 
-    // --- NOUVELLES FONCTIONS POUR L'EXPORT PDF D'UN SUJET ---
     const openExportModal = (sujet) => {
         setSelectedSujetForExport(sujet);
         setIsExportModalOpen(true);
@@ -248,13 +218,9 @@ const PageSujet = () => {
         if (!selectedSujetForExport) return;
         setExporting(true);
         setError('');
-
         try {
-            const token = localStorage.getItem('token');
-            const response = await axios.get(`http://localhost:5000/api/sujets-sauvegardes/${selectedSujetForExport.id}`, {
-                headers: { Authorization: `Bearer ${token}` }
-            });
-
+            // <-- MODIFIÉ
+            const response = await apiClient.get(`/sujets-sauvegardes/${selectedSujetForExport.id}`);
             const sujetDetails = response.data;
             if (!sujetDetails.questions || sujetDetails.questions.length === 0) {
                 alert("Ce sujet ne contient aucune question à exporter.");
@@ -268,7 +234,6 @@ const PageSujet = () => {
 
             for (const [matiereName, questions] of Object.entries(groupedQuestions)) {
                 const commonData = { matiereName, questions, sujetDetails, pdfInstance: pdf, isFirstPage };
-
                 if (exportType === 'sujet') {
                     await new Promise(resolve => setDataToPrint({ ...commonData, resolve }));
                 } else { // 'correction'
@@ -276,10 +241,8 @@ const PageSujet = () => {
                 }
                 isFirstPage = false;
             }
-
             const fileName = `${sujetDetails.titre.replace(/\s+/g, '_')}_${exportType}.pdf`;
             pdf.save(fileName);
-
         } catch (err) {
             setError("Erreur lors de la récupération des détails du sujet pour l'exportation.");
         } finally {
@@ -290,10 +253,9 @@ const PageSujet = () => {
         }
     };
 
-
+    // ... Le JSX est déjà correct ...
     return (
         <>
-            {/* MODALE D'EXPORTATION */}
             {isExportModalOpen && selectedSujetForExport && (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50 p-4">
                     <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md relative">
@@ -311,13 +273,10 @@ const PageSujet = () => {
                     </div>
                 </div>
             )}
-
-            {/* COMPOSANTS INVISIBLES POUR LA GÉNÉRATION PDF */}
             <div style={{ position: 'absolute', left: '-9999px', top: 0, zIndex: -1 }}>
                 <PrintableExamMatiere ref={printableRef} examData={dataToPrint} />
                 <PrintableCorrectionMatiere ref={correctionPrintableRef} examData={correctionDataToPrint} />
             </div>
-
             <div className="p-4 sm:p-6 lg:p-8 bg-gray-50 min-h-screen">
                 <div className="max-w-7xl mx-auto">
                     <div className="flex justify-between items-center mb-6">
@@ -328,7 +287,6 @@ const PageSujet = () => {
                             <Download size={20} className="mr-2"/>Exporter la liste (CSV)
                         </button>
                     </div>
-
                     <div className="bg-white p-4 rounded-lg shadow-md mb-8">
                         <h2 className="text-lg font-semibold text-gray-700 mb-3 flex items-center"><Filter size={20} className="mr-2"/>Filtres</h2>
                         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -350,7 +308,6 @@ const PageSujet = () => {
                             </button>
                         </div>
                     </div>
-
                     {loading ? ( <p className="text-center text-gray-500">Chargement...</p> ) :
                      error && !exporting ? ( <p className="text-center text-red-500">{error}</p> ) :
                      (

@@ -7,11 +7,30 @@ const app = express();
 const jwt = require('jsonwebtoken');
 const db = require('./config/db');
 
+const multer = require('multer'); // Pour gérer les uploads de fichiers
+const path = require('path');     // Pour manipuler les chemins de fichiers
+const fs = require('fs');         // Pour interagir avec le système de fichiers (supprimer)
 const SECRET_KEY = process.env.JWT_SECRET || 'supersecretjwtkey';
 
 // Middleware
 app.use(cors());
 app.use(express.json());
+// NOUVEAU : Rendre le dossier 'uploads' accessible publiquement
+// Cela permet au navigateur d'afficher les images via une URL comme http://.../uploads/image.jpg
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// NOUVEAU : Configuration de Multer pour le stockage des fichiers
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        // Le dossier où les images seront sauvegardées
+        cb(null, 'uploads/');
+    },
+    filename: (req, file, cb) => {
+        // Crée un nom de fichier unique pour éviter que deux fichiers aient le même nom
+        cb(null, Date.now() + '-' + file.originalname);
+    }
+});
+const upload = multer({ storage: storage });
 
 // ... (toute la partie connexion et authentification reste identique) ...
 db.getConnection((err, connection) => {
@@ -47,106 +66,50 @@ const authorizeRole = (roles) => {
 // ===============================================
 // === FONCTION UTILITAIRE CORRIGÉE ===
 // Elle prend un objet JS (pas une chaîne) et le normalise
+
+// ... (Routes users, matières, chapitres etc. restent identiques) ...
+
+// =========================================================
+// === FONCTION UTILITAIRE ET ROUTE GET (MODIFIÉES) ===
+// =========================================================
+
 const normalizeReponses = (question) => {
-    // Si 'reponses' est déjà un tableau d'objets, on le retourne.
-    // Sinon, on le parse depuis une chaîne JSON.
+    // 1. Normaliser 'reponses'
     let rawReponses = question.reponses;
     if (typeof rawReponses === 'string') {
-        try {
-            rawReponses = JSON.parse(rawReponses);
-        } catch (e) {
-            rawReponses = []; // En cas d'erreur de parsing, on retourne un tableau vide
-        }
+        try { rawReponses = JSON.parse(rawReponses); } catch (e) { rawReponses = []; }
     }
-
-    let normalized = [];
+    let normalizedReponses = [];
     if (Array.isArray(rawReponses) && rawReponses.length > 0) {
         if (typeof rawReponses[0] === 'string') {
-            // Ancien format détecté: ["texte1", "texte2"] -> Conversion
-            normalized = rawReponses.map(text => ({ texte: String(text).trim(), est_correcte: true }));
+            normalizedReponses = rawReponses.map(text => ({ texte: String(text).trim(), est_correcte: true }));
         } else {
-            // Déjà au bon format (ou format inconnu qu'on laisse passer)
-            normalized = rawReponses;
+            normalizedReponses = rawReponses;
         }
     }
+    
+    // 2. Normaliser 'reponses_meta'
+    let rawMeta = question.reponses_meta;
+    let normalizedMeta = null;
+    if (typeof rawMeta === 'string') {
+        try { normalizedMeta = JSON.parse(rawMeta); } catch (e) { normalizedMeta = null; }
+    } else if (typeof rawMeta === 'object') {
+        normalizedMeta = rawMeta;
+    }
 
-    return { ...question, reponses: normalized };
+    return { ...question, reponses: normalizedReponses, reponses_meta: normalizedMeta };
 };
 
-
-// ... (Routes Users, Matières, Chapitres etc. restent identiques) ...
-app.post('/api/register', (req, res) => {
-    const { username, password, role } = req.body;
-    if (!username || !password || !role) return res.status(400).json({ message: 'Tous les champs sont requis.' });
-    const sql = 'INSERT INTO Users (username, password, role) VALUES (?, ?, ?)';
-    db.query(sql, [username, password, role], (err, result) => {
-        if (err) {
-            if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ message: 'Nom d\'utilisateur déjà pris.' });
-            return res.status(500).json({ message: 'Erreur serveur.' });
-        }
-        res.status(201).json({ message: 'Utilisateur enregistré.' });
-    });
-});
-app.post('/api/login', (req, res) => {
-    const { username, password } = req.body;
-    if (!username || !password) return res.status(400).json({ message: 'Champs requis.' });
-    const sql = 'SELECT id, username, password, role FROM Users WHERE username = ?';
-    db.query(sql, [username], (err, results) => {
-        if (err) return res.status(500).json({ message: 'Erreur serveur.' });
-        if (results.length === 0) return res.status(401).json({ message: 'Identifiants incorrects.' });
-        const user = results[0];
-        if (password === user.password) {
-            const token = jwt.sign({ id: user.id, username: user.username, role: user.role }, SECRET_KEY, { expiresIn: '1h' });
-            return res.status(200).json({ token, role: user.role, username: user.username });
-        } else {
-            return res.status(401).json({ message: 'Identifiants incorrects.' });
-        }
-    });
-});
-app.get('/api/users', authenticateJWT, authorizeRole(['admin']), (req, res) => {
-    db.query('SELECT id, username, role, created_at FROM Users', (err, results) => {
-        if (err) return res.status(500).json({ message: 'Erreur serveur.' });
-        res.status(200).json(results);
-    });
-});
-app.delete('/api/users/:id', authenticateJWT, authorizeRole(['admin']), (req, res) => {
-    if (req.params.id == req.user.id) return res.status(403).json({ message: 'Impossible de supprimer son propre compte.' });
-    db.query('DELETE FROM Users WHERE id = ?', [req.params.id], (err, result) => {
-        if (err) return res.status(500).json({ message: 'Erreur serveur.' });
-        if (result.affectedRows === 0) return res.status(404).json({ message: 'Utilisateur non trouvé.' });
-        res.status(200).json({ message: 'Utilisateur supprimé.' });
-    });
-});
-app.post('/api/questions', authenticateJWT, authorizeRole(['admin', 'saisie']), async (req, res) => {
-    const { id_matiere, id_chapitre, enonce, type_question, reponses, points } = req.body;
-    if (!id_matiere || !enonce || !type_question || !points) {
-        return res.status(400).json({ message: 'Matière, énoncé, type et points sont requis.' });
-    }
-    if (type_question === 'QCM' && (!Array.isArray(reponses) || reponses.length === 0)) {
-        return res.status(400).json({ message: 'Au moins une réponse est requise pour un QCM.' });
-    }
-    try {
-        const sql = `
-            INSERT INTO Questions (id_matiere, id_chapitre, enonce, type_question, reponses, points)
-            VALUES (?, ?, ?, ?, ?, ?)
-        `;
-        const chapitreIdForDb = (id_chapitre && id_chapitre !== '') ? id_chapitre : null;
-        const params = [id_matiere, chapitreIdForDb, enonce, type_question, JSON.stringify(reponses), points];
-        const [result] = await db.promise().execute(sql, params);
-        res.status(201).json({ id: result.insertId, message: 'Question ajoutée avec succès.' });
-    } catch (err) {
-        console.error("Erreur SQL lors de l'ajout de la question:", err);
-        res.status(500).json({ message: 'Erreur serveur lors de la création de la question.' });
-    }
-});
 app.get('/api/questions', authenticateJWT, async (req, res) => {
     const { matiereId, chapitreId } = req.query;
+    
+    // MODIFIÉ : On sélectionne explicitement les colonnes, y compris reponses_meta
     let sql = `
-        SELECT q.id, q.id_matiere, q.id_chapitre, q.enonce, q.type_question, q.reponses, q.points, q.created_at,
+        SELECT q.id, q.id_matiere, q.id_chapitre, q.enonce, q.type_question, q.reponses, q.points, q.created_at, q.reponses_meta,q.image_enonce_url,
                m.nom_matiere, c.nom_chapitre
-        FROM Questions q
-        JOIN Matières m ON q.id_matiere = m.id
-        LEFT JOIN Chapitres c ON q.id_chapitre = c.id
+        FROM questions q
+        JOIN matières m ON q.id_matiere = m.id
+        LEFT JOIN chapitres c ON q.id_chapitre = c.id
     `;
     const params = [];
     sql += ' WHERE 1=1';
@@ -162,6 +125,7 @@ app.get('/api/questions', authenticateJWT, async (req, res) => {
     sql += ' ORDER BY q.created_at DESC';
     try {
         const [results] = await db.promise().query(sql, params);
+        // La fonction normalizeReponses gère maintenant aussi reponses_meta
         const parsedResults = results.map(normalizeReponses);
         res.status(200).json(parsedResults);
     } catch (err) {
@@ -169,53 +133,272 @@ app.get('/api/questions', authenticateJWT, async (req, res) => {
         res.status(500).json({ message: 'Erreur serveur lors de la récupération des questions.' });
     }
 });
-app.put('/api/questions/:id', authenticateJWT, authorizeRole(['admin', 'saisie']), async (req, res) => {
-    const questionId = req.params.id;
-    const { enonce, points, reponses, id_chapitre, type_question } = req.body;
-    if (!enonce || !points || !type_question) {
-        return res.status(400).json({ message: 'Énoncé, points et type sont requis.' });
+app.post('/api/register', (req, res) => {
+    const { username, password, role } = req.body;
+    if (!username || !password || !role) return res.status(400).json({ message: 'Tous les champs sont requis.' });
+const allowedRoles = ['admin', 'saisie']; // Mettez ici les rôles autorisés par votre DB
+    if (!allowedRoles.includes(role)) {
+        return res.status(400).json({ message: `Le rôle '${role}' n'est pas valide.` });
     }
-    if (type_question === 'QCM' && (!Array.isArray(reponses) || reponses.length === 0)) {
-        return res.status(400).json({ message: 'Au moins une réponse est requise pour un QCM.' });
-    }
-    try {
-        const sql = `
-            UPDATE Questions
-            SET enonce = ?, points = ?, reponses = ?, id_chapitre = ?, type_question = ?
-            WHERE id = ?
-        `;
-        const chapitreIdForDb = (id_chapitre && id_chapitre !== '') ? id_chapitre : null;
-        const params = [enonce, points, JSON.stringify(reponses), chapitreIdForDb, type_question, questionId];
-        const [result] = await db.promise().execute(sql, params);
-        if (result.affectedRows === 0) {
-            return res.status(404).json({ message: 'Question non trouvée.' });
+    const sql = 'INSERT INTO users (username, password, role) VALUES (?, ?, ?)';
+    db.query(sql, [username, password, role], (err, result) => {
+        if (err) {
+            if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ message: 'Nom d\'utilisateur déjà pris.' });
+            return res.status(500).json({ message: 'Erreur serveur.' });
         }
-        res.status(200).json({ message: 'Question modifiée avec succès.' });
+        res.status(201).json({ message: 'Utilisateur enregistré.' });
+    });
+});
+app.post('/api/login', (req, res) => {
+    const { username, password } = req.body;
+    if (!username || !password) return res.status(400).json({ message: 'Champs requis.' });
+    const sql = 'SELECT id, username, password, role FROM users WHERE username = ?';
+    db.query(sql, [username], (err, results) => {
+        if (err) return res.status(500).json({ message: 'Erreur serveur.' });
+        if (results.length === 0) return res.status(401).json({ message: 'Identifiants incorrects.' });
+        const user = results[0];
+        if (password === user.password) {
+            const token = jwt.sign({ id: user.id, username: user.username, role: user.role }, SECRET_KEY, { expiresIn: '1h' });
+            return res.status(200).json({ token, role: user.role, username: user.username });
+        } else {
+            return res.status(401).json({ message: 'Identifiants incorrects.' });
+        }
+    });
+});
+app.get('/api/users', authenticateJWT, authorizeRole(['admin']), (req, res) => {
+    db.query('SELECT id, username, role, created_at FROM users', (err, results) => {
+        if (err) return res.status(500).json({ message: 'Erreur serveur.' });
+        res.status(200).json(results);
+    });
+});
+app.delete('/api/users/:id', authenticateJWT, authorizeRole(['admin']), (req, res) => {
+    if (req.params.id == req.user.id) return res.status(403).json({ message: 'Impossible de supprimer son propre compte.' });
+    db.query('DELETE FROM users WHERE id = ?', [req.params.id], (err, result) => {
+        if (err) return res.status(500).json({ message: 'Erreur serveur.' });
+        if (result.affectedRows === 0) return res.status(404).json({ message: 'Utilisateur non trouvé.' });
+        res.status(200).json({ message: 'Utilisateur supprimé.' });
+    });
+});
+// ==============================================
+// === ROUTE DE CRÉATION DE QUESTION (MODIFIÉE) ===
+// ==============================================
+// ==============================================
+// === ROUTE DE CRÉATION DE QUESTION (AVEC IMAGES) ===
+// ==============================================
+app.post('/api/questions', authenticateJWT, authorizeRole(['admin', 'saisie']), upload.any(), async (req, res) => {
+    // Les champs texte sont dans req.body, les fichiers dans req.files
+    const { id_matiere, id_chapitre, enonce, type_question, points, reponses, reponses_meta } = req.body;
+
+    if (!id_matiere || !enonce || !type_question || !points) {
+        return res.status(400).json({ message: 'Matière, énoncé, type et points sont requis.' });
+    }
+
+    try {
+        // Les données complexes (JSON) arrivent en texte, il faut les parser
+        let parsedReponses = JSON.parse(reponses || '[]');
+        let parsedMeta = JSON.parse(reponses_meta || 'null');
+        let enonceImageUrl = null;
+
+        // Associer les fichiers uploadés à l'énoncé
+        const enonceImageFile = req.files.find(f => f.fieldname === 'enonce_image');
+        if (enonceImageFile) {
+            enonceImageUrl = `/uploads/${enonceImageFile.filename}`;
+        }
+
+        // Associer les fichiers uploadés aux réponses
+        const finalReponses = parsedReponses.map((rep, index) => {
+            const reponseImageFile = req.files.find(f => f.fieldname === `reponse_image_${index}`);
+            return {
+                texte: rep.texte, 
+                est_correcte: rep.est_correcte,
+                image_url: reponseImageFile ? `/uploads/${reponseImageFile.filename}` : null
+            };
+        });
+        
+        if (type_question === 'QCM' && finalReponses.length === 0) {
+            return res.status(400).json({ message: 'Au moins une réponse est requise pour un QCM.' });
+        }
+
+        const sql = `
+            INSERT INTO questions (id_matiere, id_chapitre, enonce, type_question, reponses, points, reponses_meta, image_enonce_url)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `;
+        const params = [
+            id_matiere,
+            (id_chapitre && id_chapitre !== '') ? id_chapitre : null,
+            enonce,
+            type_question,
+            JSON.stringify(finalReponses),
+            points,
+            JSON.stringify(parsedMeta),
+            enonceImageUrl
+        ];
+
+        const [result] = await db.promise().execute(sql, params);
+        res.status(201).json({ id: result.insertId, message: 'Question ajoutée avec succès.' });
+
     } catch (err) {
-        console.error("Erreur lors de la modification de la question:", err);
-        res.status(500).json({ message: 'Erreur serveur.' });
+        console.error("Erreur SQL lors de l'ajout de la question:", err);
+        // En cas d'erreur de la base de données, on supprime les fichiers qui ont été uploadés pour rien
+        if (req.files) {
+            req.files.forEach(file => {
+                fs.unlink(file.path, (e) => {
+                    if (e) console.error("Erreur nettoyage fichier uploadé:", e.message);
+                });
+            });
+        }
+        res.status(500).json({ message: 'Erreur serveur lors de la création de la question.' });
     }
 });
-app.delete('/api/questions/:id', authenticateJWT, authorizeRole(['admin', 'saisie']), async (req, res) => {
+// ==============================================
+// === ROUTE DE MISE À JOUR DE QUESTION (MODIFIÉE) ===
+// ==============================================
+// ==============================================
+// === ROUTE DE MISE À JOUR (AVEC IMAGES) ===
+// ==============================================
+app.put('/api/questions/:id', authenticateJWT, authorizeRole(['admin', 'saisie']), upload.any(), async (req, res) => {
     const questionId = req.params.id;
+    // On récupère les images à supprimer du frontend
+    const { enonce, points, reponses, id_chapitre, type_question, id_matiere, reponses_meta, removed_images } = req.body;
+
+    if (!enonce || !points || !type_question || !id_matiere) {
+        return res.status(400).json({ message: 'Matière, énoncé, points et type sont requis.' });
+    }
+
+    const connection = await db.promise().getConnection();
     try {
-        const [result] = await db.promise().execute('DELETE FROM Questions WHERE id = ?', [questionId]);
-        if (result.affectedRows === 0) {
+        await connection.beginTransaction();
+
+        // 1. Récupérer l'état actuel de la question pour connaître les anciens chemins d'images
+        const [currentQuestionRows] = await connection.execute('SELECT reponses, image_enonce_url FROM questions WHERE id = ?', [questionId]);
+        if (currentQuestionRows.length === 0) {
+            await connection.rollback();
+            // Nettoyer les fichiers uploadés si la question n'existe pas
+            req.files.forEach(f => fs.unlink(f.path, () => {}));
             return res.status(404).json({ message: 'Question non trouvée.' });
         }
-        res.status(200).json({ message: 'Question supprimée avec succès.' });
+        const currentQuestion = normalizeReponses(currentQuestionRows[0]);
+        
+        let parsedReponses = JSON.parse(reponses || '[]');
+        let parsedMeta = JSON.parse(reponses_meta || 'null');
+        let parsedRemovedImages = JSON.parse(removed_images || '[]');
+        let newEnonceImageUrl = currentQuestion.image_enonce_url;
+
+        const deleteFile = (url) => {
+            if (url) {
+                fs.unlink(path.join(__dirname, url), (err) => {
+                    if (err) console.error(`Erreur suppression fichier ${url}:`, err.message);
+                });
+            }
+        };
+
+        // 2. Gérer l'image de l'énoncé
+        const enonceImageFile = req.files.find(f => f.fieldname === 'enonce_image');
+        if (enonceImageFile) { // Nouvelle image uploadée ?
+            deleteFile(currentQuestion.image_enonce_url); // Supprimer l'ancienne
+            newEnonceImageUrl = `/uploads/${enonceImageFile.filename}`;
+        } else if (parsedRemovedImages.includes('enonce_image')) { // Image supprimée par l'utilisateur ?
+            deleteFile(currentQuestion.image_enonce_url);
+            newEnonceImageUrl = null;
+        }
+
+        // 3. Gérer les images des réponses
+        const finalReponses = parsedReponses.map((rep, index) => {
+            const reponseImageFile = req.files.find(f => f.fieldname === `reponse_image_${index}`);
+            let newReponseImageUrl = rep.image_url || null;
+
+            if (reponseImageFile) { // Nouvelle image pour cette réponse ?
+                deleteFile(rep.image_url);
+                newReponseImageUrl = `/uploads/${reponseImageFile.filename}`;
+            } else if (parsedRemovedImages.includes(`reponse_image_${index}`)) { // Image de réponse supprimée ?
+                deleteFile(rep.image_url);
+                newReponseImageUrl = null;
+            }
+            return { texte: rep.texte, est_correcte: rep.est_correcte, image_url: newReponseImageUrl };
+        });
+
+        // 4. Mettre à jour la base de données
+        const sql = `
+            UPDATE questions
+            SET enonce = ?, points = ?, reponses = ?, id_chapitre = ?, type_question = ?, id_matiere = ?, reponses_meta = ?, image_enonce_url = ?
+            WHERE id = ?
+        `;
+        const params = [enonce, points, JSON.stringify(finalReponses), id_chapitre || null, type_question, id_matiere, JSON.stringify(parsedMeta), newEnonceImageUrl, questionId];
+        await connection.execute(sql, params);
+
+        await connection.commit();
+        res.status(200).json({ message: 'Question modifiée avec succès.' });
+
     } catch (err) {
+        await connection.rollback();
+        console.error("Erreur lors de la modification de la question:", err);
+        // Nettoyer les fichiers uploadés en cas d'erreur
+        if (req.files) {
+            req.files.forEach(file => fs.unlink(file.path, () => {}));
+        }
+        res.status(500).json({ message: 'Erreur serveur.' });
+    } finally {
+        if(connection) connection.release();
+    }
+});
+
+// ==============================================
+// === ROUTE DE SUPPRESSION (AVEC IMAGES) ===
+// ==============================================
+app.delete('/api/questions/:id', authenticateJWT, authorizeRole(['admin', 'saisie']), async (req, res) => {
+    const questionId = req.params.id;
+    const connection = await db.promise().getConnection();
+    try {
+        await connection.beginTransaction();
+
+        // 1. Récupérer les chemins des images AVANT de supprimer la ligne
+        const [rows] = await connection.execute('SELECT reponses, image_enonce_url FROM questions WHERE id = ?', [questionId]);
+        if (rows.length === 0) {
+            await connection.rollback();
+            return res.status(404).json({ message: 'Question non trouvée.' });
+        }
+        const question = normalizeReponses(rows[0]);
+
+        // 2. Supprimer la question de la base de données
+        const [result] = await connection.execute('DELETE FROM questions WHERE id = ?', [questionId]);
+        if (result.affectedRows === 0) {
+            await connection.rollback();
+            return res.status(404).json({ message: 'Question non trouvée.' });
+        }
+        
+        // 3. Supprimer les fichiers du disque
+        const deleteFile = (url) => {
+            if (url) {
+                fs.unlink(path.join(__dirname, url), (err) => {
+                    if (err) console.error(`Erreur suppression fichier ${url}:`, err.message);
+                });
+            }
+        };
+
+        deleteFile(question.image_enonce_url);
+        if (question.reponses && Array.isArray(question.reponses)) {
+            question.reponses.forEach(rep => deleteFile(rep.image_url));
+        }
+        
+        await connection.commit();
+        res.status(200).json({ message: 'Question supprimée avec succès.' });
+
+    } catch (err) {
+        await connection.rollback();
         console.error("Erreur lors de la suppression de la question:", err);
         if (err.code === 'ER_ROW_IS_REFERENCED_2') {
              return res.status(409).json({ message: 'Impossible de supprimer cette question, car elle est déjà liée à un ou plusieurs examens.' });
         }
         res.status(500).json({ message: 'Erreur serveur.' });
+    } finally {
+         if(connection) connection.release();
     }
 });
+
 app.get('/api/examens/:examenId/questions', authenticateJWT, async (req, res) => {
     try {
         const [rows] = await db.promise().execute(
-            `SELECT q.* FROM Questions q JOIN examen_questions eq ON q.id = eq.id_question WHERE eq.id_examen = ?`,
+            `SELECT q.* FROM questions q JOIN examen_questions eq ON q.id = eq.id_question WHERE eq.id_examen = ?`,
             [req.params.examenId]
         );
         const parsedQuestions = rows.map(normalizeReponses);
@@ -233,7 +416,7 @@ app.post('/api/examens/:examenId/questions', authenticateJWT, authorizeRole(['ad
     try {
         const values = questionIds.map(qId => [req.params.examenId, qId]);
         await db.promise().query('INSERT IGNORE INTO examen_questions (id_examen, id_question) VALUES ?', [values]);
-        res.status(201).json({ message: `Questions ajoutées.` });
+        res.status(201).json({ message: `questions ajoutées.` });
     } catch (err) {
         res.status(500).json({ message: "Erreur serveur." });
     }
@@ -255,7 +438,7 @@ app.post('/api/matieres', authenticateJWT, authorizeRole(['admin', 'saisie']), (
     if (!nom_matiere) {
         return res.status(400).json({ message: 'Le nom de la matière est requis.' });
     }
-    const sql = 'INSERT INTO Matières (nom_matiere, description, abreviation) VALUES (?, ?, ?)';
+    const sql = 'INSERT INTO matières (nom_matiere, description, abreviation) VALUES (?, ?, ?)';
     db.query(sql, [nom_matiere, description, abreviation], (err, result) => {
         if (err) {
             if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ message: 'Une matière avec ce nom ou cette abréviation existe déjà.' });
@@ -267,8 +450,8 @@ app.post('/api/matieres', authenticateJWT, authorizeRole(['admin', 'saisie']), (
 app.get('/api/matieres', authenticateJWT, (req, res) => {
     const sql = `
         SELECT m.id, m.nom_matiere, m.abreviation, m.description, COUNT(c.id) AS nombre_chapitres
-        FROM Matières m
-        LEFT JOIN Chapitres c ON m.id = c.id_matiere
+        FROM matières m
+        LEFT JOIN chapitres c ON m.id = c.id_matiere
         GROUP BY m.id, m.nom_matiere, m.abreviation, m.description
     `;
     db.query(sql, (err, results) => {
@@ -282,7 +465,7 @@ app.put('/api/matieres/:id', authenticateJWT, authorizeRole(['admin', 'saisie'])
     if (!nom_matiere) {
         return res.status(400).json({ message: 'Le nom de la matière est requis.' });
     }
-    const sql = 'UPDATE Matières SET nom_matiere = ?, description = ?, abreviation = ? WHERE id = ?';
+    const sql = 'UPDATE matières SET nom_matiere = ?, description = ?, abreviation = ? WHERE id = ?';
     db.query(sql, [nom_matiere, description, abreviation, matiereId], (err, result) => {
         if (err) {
             if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ message: 'Une matière avec ce nom ou cette abréviation existe déjà.' });
@@ -293,72 +476,131 @@ app.put('/api/matieres/:id', authenticateJWT, authorizeRole(['admin', 'saisie'])
     });
 });
 app.delete('/api/matieres/:id', authenticateJWT, authorizeRole(['admin']), (req, res) => {
-    db.query('DELETE FROM Matières WHERE id = ?', [req.params.id], (err, result) => {
+    db.query('DELETE FROM matières WHERE id = ?', [req.params.id], (err, result) => {
         if (err) return res.status(500).json({ message: 'Erreur serveur.' });
         if (result.affectedRows === 0) return res.status(404).json({ message: 'Matière non trouvée.' });
         res.status(200).json({ message: 'Matière supprimée.' });
     });
 });
 
+// server.js
+
+// ... (code précédent)
+
+// ===============================================
+// === ROUTE MODIFIÉE : CRÉATION MASSE ET INDIVIDUELLE ===
+// ===============================================
+// =============================================================
+// === ROUTE CORRIGÉE : CRÉATION MASSE ET INDIVIDUELLE ROBUSTE ===
+// =============================================================
 app.post('/api/chapitres', authenticateJWT, authorizeRole(['admin', 'saisie']), async (req, res) => {
-    const { id_matiere, nombre_a_creer } = req.body;
+    // On destructure tous les champs possibles du body
+    const { id_matiere, nombre_a_creer, nom_chapitre, description } = req.body;
 
-    // Validation des entrées
-    if (!id_matiere || !nombre_a_creer) {
-        return res.status(400).json({ message: 'L\'ID de la matière et le nombre de chapitres à créer sont requis.' });
+    // --- SCÉNARIO 1 : CRÉATION EN MASSE ---
+    // On vérifie la présence de `nombre_a_creer`. On s'assure qu'il est bien un nombre > 0.
+    if (nombre_a_creer && parseInt(nombre_a_creer, 10) > 0) {
+        // Validation spécifique à la création en masse
+        if (!id_matiere) {
+            return res.status(400).json({ message: 'L\'ID de la matière est requis pour la création en masse.' });
+        }
+        
+        const count = parseInt(nombre_a_creer, 10);
+        const connection = await db.promise().getConnection();
+        try {
+            const [matiereRows] = await connection.execute('SELECT abreviation FROM matières WHERE id = ?', [id_matiere]);
+            if (matiereRows.length === 0) {
+                return res.status(404).json({ message: 'Matière non trouvée.' });
+            }
+            
+            const abreviation = matiereRows[0].abreviation;
+            if (!abreviation) {
+                return res.status(400).json({ message: 'La matière sélectionnée n\'a pas d\'abréviation, impossible de créer en masse.' });
+            }
+
+            const values = [];
+            for (let i = 1; i <= count; i++) {
+                const generated_name = `${abreviation} ${i}`;
+                values.push([id_matiere, generated_name]);
+            }
+
+            const sql = 'INSERT IGNORE INTO chapitres (id_matiere, nom_chapitre) VALUES ?';
+            const [result] = await connection.query(sql, [values]);
+            
+            return res.status(201).json({
+                message: `${result.affectedRows} chapitre(s) créé(s). ${values.length - result.affectedRows} existai(en)t déjà.`
+            });
+        } catch (err) {
+            console.error("Erreur lors de la création en masse des chapitres:", err);
+            return res.status(500).json({ message: 'Erreur serveur.' });
+        } finally {
+            if(connection) connection.release();
+        }
     }
 
-    const count = parseInt(nombre_a_creer, 10);
-    if (isNaN(count) || count <= 0) {
-        return res.status(400).json({ message: 'Le nombre de chapitres doit être un nombre positif.' });
+    // --- SCÉNARIO 2 : CRÉATION INDIVIDUELLE ---
+    // On vérifie la présence de `nom_chapitre`. Un nom vide ('') n'est pas accepté.
+    else if (nom_chapitre) {
+        // Validation spécifique à la création individuelle
+        if (!id_matiere) {
+            return res.status(400).json({ message: 'La matière est requise pour créer un chapitre.' });
+        }
+
+        try {
+            const sql = 'INSERT INTO chapitres (id_matiere, nom_chapitre, description) VALUES (?, ?, ?)';
+            const [result] = await db.promise().execute(sql, [id_matiere, nom_chapitre, description || null]);
+            
+            return res.status(201).json({ 
+                id: result.insertId, 
+                message: 'Chapitre créé avec succès.' 
+            });
+        } catch (err) {
+            if (err.code === 'ER_DUP_ENTRY') {
+                return res.status(409).json({ message: 'Ce nom de chapitre existe déjà pour cette matière.' });
+            }
+            console.error("Erreur lors de la création individuelle de chapitre:", err);
+            return res.status(500).json({ message: 'Erreur serveur.' });
+        }
     }
 
-    const connection = await db.promise().getConnection();
+    // --- SCÉNARIO 3 : ERREUR, AUCUN CAS VALIDE ---
+    // Si on arrive ici, c'est que ni 'nombre_a_creer' ni 'nom_chapitre' n'ont été fournis correctement.
+    else {
+        return res.status(400).json({ message: 'Paramètres de requête non valides. Fournissez soit "nombre_a_creer" (nombre > 0), soit "nom_chapitre" (non vide).' });
+    }
+});
+
+// ... (le reste de votre fichier server.js)
+// +++++ COLLEZ CE NOUVEAU BLOC À LA PLACE +++++
+app.get('/api/chapitres', authenticateJWT, async (req, res) => {
+    // 1. On récupère le paramètre 'matiereId' de l'URL (ex: /api/chapitres?matiereId=3)
+    const { matiereId } = req.query;
+
+    // 2. On construit la requête de base
+    let sql = 'SELECT c.id, c.nom_chapitre, c.description, m.nom_matiere, m.id as id_matiere FROM chapitres c JOIN matières m ON c.id_matiere = m.id';
+    const params = [];
+
+    // 3. SI un matiereId est fourni, on ajoute la condition de filtrage
+    if (matiereId) {
+        sql += ' WHERE c.id_matiere = ?';
+        params.push(matiereId);
+    }
+    
+    // On ajoute un tri pour la cohérence
+    sql += ' ORDER BY c.nom_chapitre ASC';
+
+    // 4. On exécute la requête (qui est maintenant dynamique)
     try {
-        // 1. Récupérer l'abréviation de la matière
-        const [matiereRows] = await connection.execute('SELECT abreviation FROM Matières WHERE id = ?', [id_matiere]);
-
-        if (matiereRows.length === 0) {
-            return res.status(404).json({ message: 'Matière non trouvée.' });
-        }
-        const abreviation = matiereRows[0].abreviation;
-        if (!abreviation) {
-            return res.status(400).json({ message: 'La matière sélectionnée n\'a pas d\'abréviation définie. Veuillez en ajouter une avant de créer des chapitres.' });
-        }
-
-        // 2. Préparer les données pour l'insertion en masse
-        const values = [];
-        for (let i = 1; i <= count; i++) {
-            const nom_chapitre = `${abreviation} ${i}`;
-            // On prépare un tableau [id_matiere, nom_chapitre] pour chaque chapitre
-            values.push([id_matiere, nom_chapitre]);
-        }
-
-        // 3. Insérer tous les chapitres en une seule requête
-        // INSERT IGNORE permet de ne pas générer d'erreur si un chapitre existe déjà (il sera simplement ignoré)
-        const sql = 'INSERT IGNORE INTO Chapitres (id_matiere, nom_chapitre) VALUES ?';
-        const [result] = await connection.query(sql, [values]);
-
-        res.status(201).json({
-            message: `${result.affectedRows} chapitre(s) créé(s) avec succès pour la matière ${abreviation}. ${values.length - result.affectedRows} existai(en)t déjà.`
-        });
-
+        const [results] = await db.promise().query(sql, params);
+        res.status(200).json(results);
     } catch (err) {
-        console.error("Erreur lors de la création en masse des chapitres:", err);
-        res.status(500).json({ message: 'Erreur serveur lors de la création des chapitres.' });
-    } finally {
-        if(connection) connection.release();
+        console.error("Erreur lors de la récupération des chapitres:", err);
+        res.status(500).json({ message: 'Erreur serveur.' });
     }
 });
-app.get('/api/chapitres', authenticateJWT, (req, res) => {
-    const sql = 'SELECT c.id, c.nom_chapitre, c.description, m.nom_matiere, m.id as id_matiere FROM Chapitres c JOIN Matières m ON c.id_matiere = m.id';
-    db.query(sql, (err, results) => {
-        if (err) return res.status(500).json({ message: 'Erreur serveur.' });
-        res.status(200).json(results);
-    });
-});
+
 app.get('/api/matieres/:id/chapitres', authenticateJWT, (req, res) => {
-    db.query('SELECT id, nom_chapitre, description FROM Chapitres WHERE id_matiere = ?', [req.params.id], (err, results) => {
+    db.query('SELECT id, nom_chapitre, description FROM chapitres WHERE id_matiere = ?', [req.params.id], (err, results) => {
         if (err) return res.status(500).json({ message: 'Erreur serveur.' });
         res.status(200).json(results);
     });
@@ -366,7 +608,7 @@ app.get('/api/matieres/:id/chapitres', authenticateJWT, (req, res) => {
 app.put('/api/chapitres/:id', authenticateJWT, authorizeRole(['admin', 'saisie']), (req, res) => {
     const { id_matiere, nom_chapitre, description } = req.body;
     if (!id_matiere || !nom_chapitre) return res.status(400).json({ message: 'ID matière et nom requis.' });
-    const sql = 'UPDATE Chapitres SET id_matiere = ?, nom_chapitre = ?, description = ? WHERE id = ?';
+    const sql = 'UPDATE chapitres SET id_matiere = ?, nom_chapitre = ?, description = ? WHERE id = ?';
     db.query(sql, [id_matiere, nom_chapitre, description, req.params.id], (err, result) => {
         if (err) {
             if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ message: 'Ce chapitre existe déjà pour cette matière.' });
@@ -377,7 +619,7 @@ app.put('/api/chapitres/:id', authenticateJWT, authorizeRole(['admin', 'saisie']
     });
 });
 app.delete('/api/chapitres/:id', authenticateJWT, authorizeRole(['admin']), (req, res) => {
-    db.query('DELETE FROM Chapitres WHERE id = ?', [req.params.id], (err, result) => {
+    db.query('DELETE FROM chapitres WHERE id = ?', [req.params.id], (err, result) => {
         if (err) return res.status(500).json({ message: 'Erreur serveur.' });
         if (result.affectedRows === 0) return res.status(404).json({ message: 'Chapitre non trouvé.' });
         res.status(200).json({ message: 'Chapitre supprimé.' });
@@ -385,7 +627,7 @@ app.delete('/api/chapitres/:id', authenticateJWT, authorizeRole(['admin']), (req
 });
 app.get('/api/promotions', authenticateJWT, async (req, res) => {
     try {
-        const [promotions] = await db.promise().execute('SELECT * FROM Promotions ORDER BY annee_debut DESC');
+        const [promotions] = await db.promise().execute('SELECT * FROM promotions ORDER BY annee_debut DESC');
         res.status(200).json(promotions);
     } catch (err) {
         res.status(500).json({ message: 'Erreur serveur.' });
@@ -397,7 +639,7 @@ app.post('/api/promotions', authenticateJWT, authorizeRole(['admin', 'saisie']),
         return res.status(400).json({ message: 'Le nom et l\'année de début sont requis.' });
     }
     try {
-        const sql = 'INSERT INTO Promotions (nom_promotion, annee_debut, description) VALUES (?, ?, ?)';
+        const sql = 'INSERT INTO promotions (nom_promotion, annee_debut, description) VALUES (?, ?, ?)';
         const [result] = await db.promise().execute(sql, [nom_promotion, annee_debut, description]);
         res.status(201).json({ id: result.insertId, message: 'Promotion créée.' });
     } catch (err) {
@@ -411,7 +653,7 @@ app.put('/api/promotions/:id', authenticateJWT, authorizeRole(['admin', 'saisie'
         return res.status(400).json({ message: 'Le nom et l\'année sont requis.' });
     }
     try {
-        const sql = 'UPDATE Promotions SET nom_promotion = ?, annee_debut = ?, description = ? WHERE id = ?';
+        const sql = 'UPDATE promotions SET nom_promotion = ?, annee_debut = ?, description = ? WHERE id = ?';
         const [result] = await db.promise().execute(sql, [nom_promotion, annee_debut, description, req.params.id]);
         if (result.affectedRows === 0) {
             return res.status(404).json({ message: 'Promotion non trouvée.' });
@@ -424,7 +666,7 @@ app.put('/api/promotions/:id', authenticateJWT, authorizeRole(['admin', 'saisie'
 });
 app.delete('/api/promotions/:id', authenticateJWT, authorizeRole(['admin']), async (req, res) => {
     try {
-        const [result] = await db.promise().execute('DELETE FROM Promotions WHERE id = ?', [req.params.id]);
+        const [result] = await db.promise().execute('DELETE FROM promotions WHERE id = ?', [req.params.id]);
         if (result.affectedRows === 0) {
             return res.status(404).json({ message: 'Promotion non trouvée.' });
         }
@@ -441,7 +683,7 @@ app.post('/api/examens', authenticateJWT, authorizeRole(['admin', 'saisie']), as
     const connection = await db.promise().getConnection();
     try {
         await connection.beginTransaction();
-        const sqlExamen = 'INSERT INTO Examens (titre, description, type_examen, id_promotion) VALUES (?, ?, ?, ?)';
+        const sqlExamen = 'INSERT INTO examens (titre, description, type_examen, id_promotion) VALUES (?, ?, ?, ?)';
         const [examenResult] = await connection.execute(sqlExamen, [titre, description, type_examen, id_promotion]);
         const newExamenId = examenResult.insertId;
         const sqlMatiereLink = 'INSERT INTO examen_matieres (id_examen, id_matiere, coefficient) VALUES ?';
@@ -471,8 +713,8 @@ app.get('/api/examens', authenticateJWT, async (req, res) => {
             e.type_examen,
             p.nom_promotion,
             e.id_promotion  -- *** AJOUT/VÉRIFICATION : Assurez-vous que cette ligne est présente ***
-        FROM Examens e
-        LEFT JOIN Promotions p ON e.id_promotion = p.id
+        FROM examens e
+        LEFT JOIN promotions p ON e.id_promotion = p.id
         WHERE e.id_parent_examen IS NULL
     `;
     const params = [];
@@ -496,10 +738,10 @@ app.get('/api/examens', authenticateJWT, async (req, res) => {
 
 app.get('/api/examens/:id', authenticateJWT, async (req, res) => {
     try {
-        const [examenRes] = await db.promise().execute('SELECT * FROM Examens WHERE id = ?', [req.params.id]);
+        const [examenRes] = await db.promise().execute('SELECT * FROM examens WHERE id = ?', [req.params.id]);
         if (examenRes.length === 0) return res.status(404).json({ message: 'Examen non trouvé.' });
         const [matieresRes] = await db.promise().execute(
-            `SELECT m.id as id_matiere, m.nom_matiere, em.coefficient FROM examen_matieres em JOIN Matières m ON em.id_matiere = m.id WHERE em.id_examen = ?`,
+            `SELECT m.id as id_matiere, m.nom_matiere, em.coefficient FROM examen_matieres em JOIN matières m ON em.id_matiere = m.id WHERE em.id_examen = ?`,
             [req.params.id]
         );
         res.status(200).json({ ...examenRes[0], matieres: matieresRes });
@@ -516,7 +758,7 @@ app.put('/api/examens/:id', authenticateJWT, authorizeRole(['admin', 'saisie']),
     const connection = await db.promise().getConnection();
     try {
         await connection.beginTransaction();
-        await connection.execute('UPDATE Examens SET titre = ?, description = ?, type_examen = ?, id_promotion = ? WHERE id = ?', [titre, description, type_examen, id_promotion, examenId]);
+        await connection.execute('UPDATE examens SET titre = ?, description = ?, type_examen = ?, id_promotion = ? WHERE id = ?', [titre, description, type_examen, id_promotion, examenId]);
         await connection.execute('DELETE FROM examen_matieres WHERE id_examen = ?', [examenId]);
         const sqlMatiereLink = 'INSERT INTO examen_matieres (id_examen, id_matiere, coefficient) VALUES ?';
         const matiereValues = matieres.map(m => [examenId, m.id_matiere, m.coefficient]);
@@ -544,9 +786,9 @@ app.get('/api/sujets-sauvegardes', authenticateJWT, async (req, res) => {
             parent.type_examen,
             p.nom_promotion,
             parent.titre as titre_parent
-        FROM Examens s
-        JOIN Promotions p ON s.id_promotion = p.id
-        LEFT JOIN Examens parent ON s.id_parent_examen = parent.id
+        FROM examens s
+        JOIN promotions p ON s.id_promotion = p.id
+        LEFT JOIN examens parent ON s.id_parent_examen = parent.id
         WHERE s.id_parent_examen IS NOT NULL
     `;
     const params = [];
@@ -575,8 +817,15 @@ app.get('/api/sujets-sauvegardes', authenticateJWT, async (req, res) => {
     }
 });
 
+// TROUVEZ CETTE FONCTION DANS VOTRE server.js
 function trouverCombinaison(questionsDisponibles, pointsRestants, questionsUtilisees = new Set()) {
-    if (pointsRestants === 0) return [];
+    // ANCIENNE LIGNE (INCORRECTE POUR LES DÉCIMAUX)
+    // if (pointsRestants === 0) return [];
+
+    // NOUVELLE LIGNE (CORRIGÉE)
+    // On considère que la combinaison est bonne si le reste est très proche de 0.
+    if (Math.abs(pointsRestants) < 0.001) return [];
+
     if (pointsRestants < 0 || questionsDisponibles.length === 0) return null;
     const questionsMelangees = [...questionsDisponibles].sort(() => 0.5 - Math.random());
     for (let i = 0; i < questionsMelangees.length; i++) {
@@ -584,6 +833,8 @@ function trouverCombinaison(questionsDisponibles, pointsRestants, questionsUtili
         if (questionsUtilisees.has(questionActuelle.id)) continue;
         const nouvellesQuestionsDisponibles = questionsMelangees.slice(i + 1);
         const nouvellesQuestionsUtilisees = new Set(questionsUtilisees).add(questionActuelle.id);
+        
+        // Le reste de la fonction ne change pas
         const resultatRecursif = trouverCombinaison(nouvellesQuestionsDisponibles, pointsRestants - questionActuelle.points, nouvellesQuestionsUtilisees);
         if (resultatRecursif !== null) {
             return [questionActuelle, ...resultatRecursif];
@@ -591,7 +842,6 @@ function trouverCombinaison(questionsDisponibles, pointsRestants, questionsUtili
     }
     return null;
 }
-
 // =======================================================================
 // === ROUTE MODIFIÉE POUR LA GÉNÉRATION DE SUJETS PAR MATIÈRE ===
 // =======================================================================
@@ -609,7 +859,7 @@ app.post('/api/generate-exam-versions', authenticateJWT, authorizeRole(['admin',
     try {
         // 3. Récupérer EN UNE SEULE FOIS toutes les questions potentiellement utiles
         // C'est plus efficace que de faire une requête dans une boucle
-        let sql = `SELECT id, enonce, points, reponses, id_matiere, id_chapitre FROM Questions WHERE id_matiere IN (?)`;
+        let sql = `SELECT id, enonce, points, reponses, id_matiere, id_chapitre FROM questions WHERE id_matiere IN (?)`;
         const params = [matiereIds];
 
         if (Array.isArray(chapitreIds) && chapitreIds.length > 0) {
@@ -617,14 +867,21 @@ app.post('/api/generate-exam-versions', authenticateJWT, authorizeRole(['admin',
             params.push(chapitreIds);
         }
 
-        const [rawQuestions] = await db.promise().query(sql, params);
-        // On normalise les réponses comme pour les autres routes
-        const allAvailableQuestions = rawQuestions.map(normalizeReponses);
+        // ...
+const [rawQuestions] = await db.promise().query(sql, params);
 
-        if (allAvailableQuestions.length === 0) {
-            return res.status(404).json({ message: "Aucune question trouvée pour les filtres sélectionnés." });
-        }
+// --- DÉBUT DE LA SECTION À REMPLACER ---
+// On normalise les réponses ET on s'assure que les points sont bien des NOMBRES.
+const allAvailableQuestions = rawQuestions.map(q => ({
+    ...normalizeReponses(q),
+    points: parseFloat(q.points)
+}));
+// --- FIN DE LA SECTION À REMPLACER ---
 
+if (allAvailableQuestions.length === 0) {
+    return res.status(404).json({ message: "Aucune question trouvée pour les filtres sélectionnés." });
+}
+// ...
         // 4. Boucle principale pour générer le nombre de versions (sujets) demandées
         const versions = [];
         const versionsSignatures = new Set(); // Pour s'assurer que les sujets générés sont uniques
@@ -704,7 +961,7 @@ app.post('/api/save-generated-exams', authenticateJWT, authorizeRole(['admin', '
     try {
         await connection.beginTransaction();
 
-        const [parentExamRows] = await connection.execute('SELECT titre, id_promotion, type_examen FROM Examens WHERE id = ?', [id_examen_parent]);
+        const [parentExamRows] = await connection.execute('SELECT titre, id_promotion, type_examen FROM examens WHERE id = ?', [id_examen_parent]);
         if (parentExamRows.length === 0) {
             await connection.rollback();
             return res.status(404).json({ message: "L'examen parent n'a pas été trouvé." });
@@ -716,8 +973,8 @@ app.post('/api/save-generated-exams', authenticateJWT, authorizeRole(['admin', '
             const version = versions[i];
             const titreExamen = `${parentExam.titre} - Sujet ${i + 1}`;
 
-            // 1. Créer l'entrée pour le sujet dans la table Examens (inchangé)
-            const sqlExamen = 'INSERT INTO Examens (titre, type_examen, id_promotion, id_parent_examen) VALUES (?, ?, ?, ?)';
+            // 1. Créer l'entrée pour le sujet dans la table examens (inchangé)
+            const sqlExamen = 'INSERT INTO examens (titre, type_examen, id_promotion, id_parent_examen) VALUES (?, ?, ?, ?)';
             const [examenResult] = await connection.execute(sqlExamen, [titreExamen, parentExam.type_examen, parentExam.id_promotion, id_examen_parent]);
             const newExamenId = examenResult.insertId;
             savedExamsIds.push(newExamenId);
@@ -779,8 +1036,8 @@ app.get('/api/sujets-sauvegardes/:id', authenticateJWT, async (req, res) => {
                 s.id, s.titre, s.created_at,
                 parent.titre as titre_parent,
                 parent.type_examen
-            FROM Examens s
-            LEFT JOIN Examens parent ON s.id_parent_examen = parent.id
+            FROM examens s
+            LEFT JOIN examens parent ON s.id_parent_examen = parent.id
             WHERE s.id = ? AND s.id_parent_examen IS NOT NULL
         `;
         const [sujetRows] = await db.promise().execute(sqlSujet, [sujetId]);
@@ -794,8 +1051,8 @@ app.get('/api/sujets-sauvegardes/:id', authenticateJWT, async (req, res) => {
         const sqlQuestions = `
             SELECT q.*, m.nom_matiere
             FROM examen_questions eq
-            JOIN Questions q ON eq.id_question = q.id
-            JOIN Matières m ON q.id_matiere = m.id
+            JOIN questions q ON eq.id_question = q.id
+            JOIN matières m ON q.id_matiere = m.id
             WHERE eq.id_examen = ?
             ORDER BY m.nom_matiere, q.id
         `;

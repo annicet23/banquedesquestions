@@ -1,9 +1,10 @@
-// src/pages/PromotionManagementPage.jsx
+// --- START OF FILE PromotionManagementPage.jsx (CORRIGÉ) ---
 
 import React, { useState, useEffect, Fragment } from 'react';
-import axios from 'axios';
+// import axios from 'axios'; // <-- MODIFIÉ
 import { Plus, Pencil, Trash2 } from 'lucide-react';
 import { Dialog, Transition } from '@headlessui/react';
+import apiClient from '../config/api'; // <-- MODIFIÉ
 
 const PromotionManagementPage = () => {
     const [promotions, setPromotions] = useState([]);
@@ -23,8 +24,8 @@ const PromotionManagementPage = () => {
     const fetchPromotions = async () => {
         setLoading(true);
         try {
-            const token = localStorage.getItem('token');
-            const response = await axios.get('http://localhost:5000/api/promotions', { headers: { Authorization: `Bearer ${token}` } });
+            // <-- MODIFIÉ : Utilisation de apiClient
+            const response = await apiClient.get('/promotions');
             setPromotions(response.data);
         } catch (err) {
             setError('Impossible de charger les promotions.');
@@ -56,13 +57,13 @@ const PromotionManagementPage = () => {
 
     const handleFormSubmit = async (e) => {
         e.preventDefault();
-        const token = localStorage.getItem('token');
         const url = editingPromotion
-            ? `http://localhost:5000/api/promotions/${editingPromotion.id}`
-            : 'http://localhost:5000/api/promotions';
+            ? `/promotions/${editingPromotion.id}` // <-- MODIFIÉ
+            : '/promotions'; // <-- MODIFIÉ
         const method = editingPromotion ? 'put' : 'post';
         try {
-            await axios[method](url, formState, { headers: { Authorization: `Bearer ${token}` } });
+            // <-- MODIFIÉ : Utilisation de apiClient
+            await apiClient[method](url, formState);
             setMessage(`Promotion ${editingPromotion ? 'modifiée' : 'créée'} avec succès !`);
             closeModal();
             fetchPromotions();
@@ -75,8 +76,8 @@ const PromotionManagementPage = () => {
     const handleDelete = async (promotionId) => {
         if (!window.confirm('Voulez-vous vraiment supprimer cette promotion ? Les examens liés ne seront pas supprimés mais ne seront plus associés.')) return;
         try {
-            const token = localStorage.getItem('token');
-            await axios.delete(`http://localhost:5000/api/promotions/${promotionId}`, { headers: { Authorization: `Bearer ${token}` } });
+            // <-- MODIFIÉ : Utilisation de apiClient
+            await apiClient.delete(`/promotions/${promotionId}`);
             setMessage('Promotion supprimée avec succès.');
             fetchPromotions();
             setTimeout(() => setMessage(''), 3000);
@@ -87,6 +88,7 @@ const PromotionManagementPage = () => {
 
     if (loading) return <div className="p-8 text-center">Chargement...</div>;
 
+    // ... Le JSX est déjà correct ...
     return (
         <div className="p-4 sm:p-6 lg:p-8 bg-gray-50 min-h-screen">
             <div className="max-w-7xl mx-auto">
@@ -126,7 +128,6 @@ const PromotionManagementPage = () => {
                 </div>
             </div>
 
-            {/* Modal pour Ajouter/Modifier */}
             <Transition appear show={isModalOpen} as={Fragment}>
                 <Dialog as="div" className="relative z-10" onClose={closeModal}>
                     <div className="fixed inset-0 bg-black bg-opacity-30" />

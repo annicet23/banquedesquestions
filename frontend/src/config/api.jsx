@@ -1,37 +1,29 @@
-// 1. Lire l'URL de base depuis les variables d'environnement.
-//    Vite expose les variables via `import.meta.env`.
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
+// --- START OF FILE frontend/src/config/api.jsx (VERSION CORRIGÉE) ---
 
-// 2. Créer un objet qui contient TOUTES les routes de votre API.
-//    C'est la SEULE et UNIQUE source de vérité pour vos URLs d'API.
-export const apiUrls = {
-  // Authentification
-  login: `${API_BASE_URL}/login`,
-  register: `${API_BASE_URL}/register`,
-
-  // Utilisateurs
-  users: {
-    getAll: `${API_BASE_URL}/users`,
-    deleteById: (userId) => `${API_BASE_URL}/users/${userId}`,
-  },
-
-  // Matières
-  matieres: {
-    getAll: `${API_BASE_URL}/matieres`,
-    // etc.
-  },
-
-  // Ajoutez ici toutes vos autres routes...
-};
-
-// 3. (Optionnel mais recommandé) Créer un client Axios pré-configuré
 import axios from 'axios';
 
+// 1. Lire l'URL de base pour l'API depuis les variables d'environnement.
+//    Exemple: http://localhost:5000/api
+const API_URL = import.meta.env.VITE_API_BASE_URL;
+
+// 2. NOUVEAU : Définir explicitement l'URL pour les ressources statiques (images).
+//    C'est la même URL que l'API, mais SANS le suffixe '/api'.
+//    Exemple: http://localhost:5000
+const STATIC_RESOURCES_URL = API_URL.replace('/api', '');
+
+
+// 3. Créer un client Axios pré-configuré pour les appels API.
 const apiClient = axios.create({
-  baseURL: API_BASE_URL, // La base est déjà définie ici !
+  baseURL: API_URL, // La base pour les appels API (ex: /questions)
 });
 
-// On ajoute le token JWT à chaque requête automatiquement
+
+// 4. NOUVEAU : On attache notre URL statique à l'instance apiClient.
+//    Ceci permet de l'importer et de l'utiliser facilement partout dans l'application.
+apiClient.defaults.staticBaseURL = STATIC_RESOURCES_URL;
+
+
+// 5. Intercepteur pour ajouter le token JWT à chaque requête automatiquement.
 apiClient.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem('token');
@@ -45,4 +37,8 @@ apiClient.interceptors.request.use(
   }
 );
 
+
+// 6. Exporter le client configuré.
 export default apiClient;
+
+// --- END OF FILE frontend/src/config/api.jsx ---

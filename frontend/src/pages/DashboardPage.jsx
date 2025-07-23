@@ -1,9 +1,19 @@
+// --- START OF FILE frontend/src/pages/DashboardPage.jsx ---
 import React, { useEffect, useState } from 'react';
 import { jwtDecode } from 'jwt-decode';
-import { Link, useNavigate } from 'react-router-dom';
-import { Users, Book, Library, FileText, HelpCircle } from 'lucide-react'; // <-- Import des icônes
+import { Link } from 'react-router-dom';
+import {
+    Users,
+    Book,
+    Library,
+    FileText,
+    HelpCircle,
+    GraduationCap, // Icône pour Promotions
+    Archive,       // Icône pour Sujets Sauvegardés
+    Wand2,         // Icône pour le Générateur
+} from 'lucide-react';
 
-// --- NOUVEAU : Composant de carte réutilisable ---
+// Le composant de carte réutilisable reste inchangé
 const DashboardCard = ({ to, icon, title, color }) => {
     // Crée l'icône dynamiquement
     const IconComponent = React.createElement(icon, { className: "w-12 h-12 mb-4" });
@@ -11,8 +21,10 @@ const DashboardCard = ({ to, icon, title, color }) => {
     return (
         <Link
             to={to}
+            // La classe "hover:border-${color}" est générée dynamiquement
             className={`group block bg-white p-8 rounded-xl shadow-sm hover:shadow-lg hover:-translate-y-1 transition-all duration-300 border-2 border-transparent hover:border-${color}`}
         >
+            {/* La classe "text-${color}" est aussi générée dynamiquement */}
             <div className={`text-${color}`}>
                 {IconComponent}
             </div>
@@ -25,11 +37,8 @@ const DashboardCard = ({ to, icon, title, color }) => {
 const DashboardPage = () => {
     const [username, setUsername] = useState('');
     const [role, setRole] = useState('');
-    const navigate = useNavigate();
 
     useEffect(() => {
-        // La logique de redirection est déjà gérée par ProtectedRoute,
-        // donc ici on se contente de récupérer les infos de l'utilisateur.
         const token = localStorage.getItem('token');
         if (token) {
             const decodedToken = jwtDecode(token);
@@ -38,15 +47,16 @@ const DashboardPage = () => {
         }
     }, []);
 
-    // Classe pour le hack de couleur de Tailwind (voir explication plus bas)
-    const hiddenColorClasses = "hover:border-blue-500 text-blue-500 hover:border-purple-500 text-purple-500 hover:border-green-500 text-green-500 hover:border-orange-500 text-orange-500 hover:border-teal-500 text-teal-500";
+    // **CORRECTION IMPORTANTE**
+    // Cette chaîne de caractères contient TOUTES les classes de couleur dynamiques utilisées.
+    // Tailwind peut ainsi les détecter et générer le CSS correspondant.
+    const tailwindColorHack = "hover:border-blue-500 text-blue-500 hover:border-purple-500 text-purple-500 hover:border-green-500 text-green-500 hover:border-orange-500 text-orange-500 hover:border-teal-500 text-teal-500 hover:border-red-500 text-red-500 hover:border-indigo-500 text-indigo-500 hover:border-pink-500 text-pink-500";
 
 
     return (
         <div className="min-h-screen bg-gray-50 p-4 sm:p-6 lg:p-8">
             <div className="container mx-auto">
 
-                {/* --- Section de bienvenue --- */}
                 <div className="mb-10 text-left">
                     <h1 className="text-4xl font-bold text-gray-800">
                         Bienvenue, <span className="text-primary">{username}</span> !
@@ -69,7 +79,8 @@ const DashboardPage = () => {
                         />
                     )}
 
-                    {/* Cartes pour la Gestion du Contenu (Admin et Saisie) */}
+                    {/* --- AJOUT DES NOUVELLES CARTES --- */}
+                    {/* Cartes pour tous les utilisateurs connectés (admin, saisie, etc.) */}
                     {(role === 'admin' || role === 'saisie') && (
                         <>
                             <DashboardCard
@@ -84,27 +95,46 @@ const DashboardPage = () => {
                                 title="Chapitres"
                                 color="orange-500"
                             />
-                            <DashboardCard
-                                to="/examens"
-                                icon={FileText}
-                                title="Examens"
-                                color="blue-500"
-                            />
-                            <DashboardCard
+                             <DashboardCard
                                 to="/questions"
                                 icon={HelpCircle}
                                 title="Questions"
                                 color="teal-500"
                             />
+                            <DashboardCard
+                                to="/promotions"
+                                icon={GraduationCap}
+                                title="Promotions"
+                                color="red-500"
+                            />
+                            <DashboardCard
+                                to="/examens"
+                                icon={FileText}
+                                title="Modèles d'Examen"
+                                color="blue-500"
+                            />
+                            <DashboardCard
+                                to="/generate-exam"
+                                icon={Wand2}
+                                title="Générateur"
+                                color="pink-500"
+                            />
+                            <DashboardCard
+                                to="/sujets-sauvegardes"
+                                icon={Archive}
+                                title="Sujets Sauvegardés"
+                                color="indigo-500"
+                            />
                         </>
                     )}
                 </div>
 
-                {/* Ce div est un "hack" pour que Tailwind CSS inclue les couleurs dynamiques. Il est invisible. */}
-                <div className="hidden hover:border-blue-500 text-blue-500 hover:border-purple-500 text-purple-500 hover:border-green-500 text-green-500 hover:border-orange-500 text-orange-500 hover:border-teal-500 text-teal-500" />
+                {/* Ce div invisible applique la variable `tailwindColorHack` pour forcer la compilation des styles */}
+                <div className={tailwindColorHack} />
             </div>
         </div>
     );
 };
 
 export default DashboardPage;
+// --- END OF FILE frontend/src/pages/DashboardPage.jsx ---

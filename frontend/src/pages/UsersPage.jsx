@@ -1,10 +1,13 @@
+// --- START OF FILE UsersPage.jsx (CORRIGÉ) ---
+
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+// import axios from 'axios'; // <-- MODIFIÉ
+import apiClient from '../config/api'; // <-- MODIFIÉ (Assurez-vous que le chemin est correct)
 
 function UsersPage({ userRole }) {
   const [users, setUsers] = useState([]);
   const [newUser, setNewUser] = useState({ username: '', password: '', role: 'saisie' });
-  const [editingUser, setEditingUser] = useState(null); // Utilisateur en cours d'édition
+  const [editingUser, setEditingUser] = useState(null);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
 
@@ -16,10 +19,8 @@ function UsersPage({ userRole }) {
 
   const fetchUsers = async () => {
     try {
-      const token = localStorage.getItem('token');
-      const response = await axios.get('http://localhost:5000/api/users', {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      // <-- MODIFIÉ
+      const response = await apiClient.get('/users');
       setUsers(response.data);
       setError('');
     } catch (err) {
@@ -30,13 +31,11 @@ function UsersPage({ userRole }) {
   const handleCreateUser = async (e) => {
     e.preventDefault();
     try {
-      const token = localStorage.getItem('token');
-      await axios.post('http://localhost:5000/api/users', newUser, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      // <-- MODIFIÉ
+      await apiClient.post('/users', newUser);
       setMessage('Utilisateur créé avec succès !');
       setNewUser({ username: '', password: '', role: 'saisie' });
-      fetchUsers(); // Rafraîchir la liste
+      fetchUsers();
       setError('');
     } catch (err) {
       setError(err.response?.data?.message || 'Erreur lors de la création de l\'utilisateur.');
@@ -47,12 +46,10 @@ function UsersPage({ userRole }) {
   const handleDeleteUser = async (userId) => {
     if (window.confirm('Êtes-vous sûr de vouloir supprimer cet utilisateur ?')) {
       try {
-        const token = localStorage.getItem('token');
-        await axios.delete(`http://localhost:5000/api/users/${userId}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
+        // <-- MODIFIÉ
+        await apiClient.delete(`/users/${userId}`);
         setMessage('Utilisateur supprimé avec succès !');
-        fetchUsers(); // Rafraîchir la liste
+        fetchUsers();
         setError('');
       } catch (err) {
         setError(err.response?.data?.message || 'Erreur lors de la suppression de l\'utilisateur.');
@@ -62,16 +59,14 @@ function UsersPage({ userRole }) {
   };
 
   const handleEditClick = (user) => {
-    setEditingUser({ ...user, password: '' }); // Ne pas pré-remplir le mot de passe
+    setEditingUser({ ...user, password: '' });
   };
 
   const handleUpdateUser = async (e) => {
     e.preventDefault();
     try {
-      const token = localStorage.getItem('token');
-      await axios.put(`http://localhost:5000/api/users/${editingUser.id}`, editingUser, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      // <-- MODIFIÉ
+      await apiClient.put(`/users/${editingUser.id}`, editingUser);
       setMessage('Utilisateur mis à jour avec succès !');
       setEditingUser(null);
       fetchUsers();
@@ -86,6 +81,7 @@ function UsersPage({ userRole }) {
     return <p style={{ textAlign: 'center', marginTop: '50px', color: 'red' }}>Accès non autorisé à cette page.</p>;
   }
 
+  // ... Le JSX reste identique ...
   return (
     <div style={{ maxWidth: '800px', margin: '50px auto', padding: '20px', border: '1px solid #ccc', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
       <h2>Gestion des Comptes Utilisateurs</h2>
