@@ -1,4 +1,4 @@
-// --- START OF FILE QuestionManagementPage.jsx (VERSION FINALE ET CORRIGÉE) ---
+// --- START OF FILE QuestionManagementPage.jsx (VERSION FINALE AVEC EXPORT PDF COMPLET) ---
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { PlusCircle, List, Pencil, Trash2, XCircle, FileDown, Plus, Minus, Image as ImageIcon, X, CheckCircle } from 'lucide-react';
@@ -112,7 +112,6 @@ const QuestionManagementPage = () => {
                 setAllMatieres(res.data);
             } catch (err) {
                 setError('Erreur lors du chargement des matières.');
-                console.error("Erreur API matières:", err);
             } finally {
                 setLoading(false);
             }
@@ -335,8 +334,128 @@ const QuestionManagementPage = () => {
             setError(err.response?.data?.message || 'Une erreur est survenue.');
         }
     };
+    
+    // ====================================================================================
+    // === NOUVELLE FONCTION D'EXPORT PDF - CORRIGÉE POUR L'AFFICHAGE DES IMAGES ET TABLEAUX ===
+    // ====================================================================================
+    const handleExportPDF = async () => {
+        if (questionsInCurrentContext.length === 0) return;
 
-    const handleExportPDF = async () => { /* ... Le code de l'export PDF reste identique ... */ };
+        setToast({ show: true, message: 'Génération du PDF en cours...' });
+        setError('');
+
+        try {
+            const preparedQuestions = await Promise.all(
+                questionsInCurrentContext.map(async (q) => {
+                    const enonceImageBase64 = q.image_enonce_url ? await convertImageToBase64(q.image_enonce_url) : null;
+                    const reponsesAvecImages = q.reponses ? await Promise.all(
+                        (q.reponses || []).map(async (rep) => ({
+                            ...rep,
+                            imageBase64: rep.image_url ? await convertImageToBase64(rep.image_url) : null,
+                        }))
+                    ) : [];
+                    return { ...q, enonceImageBase64, reponses: reponsesAvecImages };
+                })
+            );
+
+            const doc = new jsPDF();
+            let y = 15; // Marge de départ en haut
+
+            preparedQuestions.forEach((q, index) => {
+                // Si la question ne rentre pas, on passe à une nouvelle page
+                // C'est une estimation, à ajuster si besoin
+                if (y > 250) {
+                    doc.addPage();
+                    y = 15;
+                }
+                
+                // Séparateur entre les questions
+                if (index > 0) {
+                    y += 5;
+                    doc.setDrawColor(220, 220, 220);
+                    doc.line(15, y, 195, y);
+                    y += 10;
+                }
+
+                // Affichage de la question, chapitre et points
+                doc.setFont('helvetica', 'bold');
+                doc.setFontSize(12);
+                doc.text(`Q.${q.id}: ${q.enonce}`, 15, y, { maxWidth: 155 });
+                doc.setFont('helvetica', 'normal');
+                doc.text(`${parseFloat(q.points).toFixed(2)} pt(s)`, 195, y, { align: 'right' });
+                y += doc.getTextDimensions(`Q.${q.id}: ${q.enonce}`, { maxWidth: 155 }).h + 2;
+
+                if (q.nom_chapitre) {
+                    doc.setFontSize(9);
+                    doc.setTextColor(100);
+                    doc.text(`Chapitre: ${q.nom_chapitre}`, 15, y);
+                    doc.setTextColor(0);
+                    y += 5;
+                }
+                
+                if (q.enonceImageBase64) {
+                    doc.addImage(q.enonceImageBase64, 'JPEG', 15, y, 50, 50);
+                    y += 55;
+                }
+
+                y += 2; // Petit espace avant la réponse
+
+                // === GESTION DES DIFFÉRENTS TYPES DE RÉPONSES ===
+                if (q.reponses_meta?.type === 'tableau') {
+                    const cols = q.reponses_meta.colonnes || 2;
+                    const tableReponses = chunkArray(q.reponses, cols);
+
+                    const head = [tableReponses[0]?.map(cell => cell.texte) || []];
+                    const body = tableReponses.length > 1 ? tableReponses.slice(1).map(row => row.map(cell => cell.texte || '')) : [];
+                    
+                    autoTable(doc, {
+                        startY: y,
+                        head: head,
+                        body: body,
+                        theme: 'grid',
+                        headStyles: { 
+                            fillColor: [23, 162, 184], // Couleur teal de votre screenshot
+                            textColor: 255, 
+                            fontStyle: 'bold' 
+                        },
+                        styles: { fontSize: 10, cellPadding: 2 },
+                        margin: { left: 15, right: 15 }
+                    });
+                    y = doc.lastAutoTable.finalY + 10;
+
+                } else { // Gère les listes et les images
+                    doc.setFont('helvetica', 'normal');
+                    doc.setFontSize(10);
+                    (q.reponses || []).forEach(rep => {
+                        if (rep.texte) {
+                            const repLines = doc.splitTextToSize(`- ${rep.texte}`, 170);
+                            doc.text(repLines, 20, y);
+                            y += repLines.length * 5;
+                        }
+                        if (rep.imageBase64) {
+                            y += 2;
+                            doc.addImage(rep.imageBase64, 'JPEG', 20, y, 40, 40);
+                            y += 45;
+                        }
+                    });
+                     y += 5; // Espace après la dernière réponse
+                }
+            });
+
+            // Sauvegarder le fichier avec le nom dynamique
+            const matiere = allMatieres.find(m => m.id.toString() === selectedMatiereId);
+            const matiereName = matiere ? (matiere.abreviation || matiere.nom_matiere).toLowerCase() : 'matiere';
+            // CORRIGÉ: Nom du fichier comme demandé
+            doc.save(`question_reponse_${matiereName.replace(/\s/g, '_')}.pdf`);
+
+        } catch (e) {
+            setError("Une erreur est survenue lors de la génération du PDF.");
+            console.error(e);
+        } finally {
+            setToast({ show: false, message: '' });
+        }
+    };
+
 
     return (
         <div className="p-4 sm:p-6 lg:p-8 bg-gray-50 min-h-screen">
@@ -346,7 +465,6 @@ const QuestionManagementPage = () => {
                     <span>{toast.message}</span>
                 </div>
             )}
-
             <div className="max-w-7xl mx-auto">
                 <div className="p-6 bg-white rounded-lg shadow mb-8">
                     <h2 className="text-xl font-semibold text-gray-700 border-b pb-4 mb-6">Sélection du Contexte</h2>
@@ -521,3 +639,5 @@ const QuestionManagementPage = () => {
 };
 
 export default QuestionManagementPage;
+
+// --- END OF FILE QuestionManagementPage.jsx (VERSION FINALE ET CORRIGÉE) ---
