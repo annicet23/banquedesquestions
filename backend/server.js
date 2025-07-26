@@ -87,7 +87,7 @@ const normalizeReponses = (question) => {
             normalizedReponses = rawReponses;
         }
     }
-    
+
     // 2. Normaliser 'reponses_meta'
     let rawMeta = question.reponses_meta;
     let normalizedMeta = null;
@@ -102,7 +102,7 @@ const normalizeReponses = (question) => {
 
 app.get('/api/questions', authenticateJWT, async (req, res) => {
     const { matiereId, chapitreId } = req.query;
-    
+
     // MODIFIÉ : On sélectionne explicitement les colonnes, y compris reponses_meta
     let sql = `
         SELECT q.id, q.id_matiere, q.id_chapitre, q.enonce, q.type_question, q.reponses, q.points, q.created_at, q.reponses_meta,q.image_enonce_url,
@@ -133,15 +133,24 @@ app.get('/api/questions', authenticateJWT, async (req, res) => {
         res.status(500).json({ message: 'Erreur serveur lors de la récupération des questions.' });
     }
 });
+
+// ===== BLOC DE GESTION UTILISATEURS (À REMPLACER DANS server.js) =====
+
+// Route pour l'enregistrement public (si vous avez une page d'inscription séparée)
+// ou pour la création par un admin.
 app.post('/api/register', (req, res) => {
-    const { username, password, role } = req.body;
-    if (!username || !password || !role) return res.status(400).json({ message: 'Tous les champs sont requis.' });
-const allowedRoles = ['admin', 'saisie']; // Mettez ici les rôles autorisés par votre DB
+    // MODIFIÉ : Ajout de nom, prenom, grade
+    const { username, password, role, nom, prenom, grade } = req.body;
+    if (!username || !password || !role) return res.status(400).json({ message: 'Nom d\'utilisateur, mot de passe et rôle sont requis.' });
+    
+    const allowedRoles = ['admin', 'saisie'];
     if (!allowedRoles.includes(role)) {
         return res.status(400).json({ message: `Le rôle '${role}' n'est pas valide.` });
     }
-    const sql = 'INSERT INTO users (username, password, role) VALUES (?, ?, ?)';
-    db.query(sql, [username, password, role], (err, result) => {
+    
+    // MODIFIÉ : Ajout des nouveaux champs dans la requête SQL
+    const sql = 'INSERT INTO users (username, password, role, nom, prenom, grade) VALUES (?, ?, ?, ?, ?, ?)';
+    db.query(sql, [username, password, role, nom, prenom, grade], (err, result) => {
         if (err) {
             if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ message: 'Nom d\'utilisateur déjà pris.' });
             return res.status(500).json({ message: 'Erreur serveur.' });
@@ -149,36 +158,102 @@ const allowedRoles = ['admin', 'saisie']; // Mettez ici les rôles autorisés pa
         res.status(201).json({ message: 'Utilisateur enregistré.' });
     });
 });
+
+
+// DANS backend/server.js
+// TROUVEZ CETTE ROUTE ET REMPLACEZ-LA ENTIÈREMENT
+
 app.post('/api/login', (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ message: 'Champs requis.' });
-    const sql = 'SELECT id, username, password, role FROM users WHERE username = ?';
+
+    // La requête SQL est déjà correcte et sélectionne le grade
+    const sql = 'SELECT id, username, password, role, nom, prenom, grade FROM users WHERE username = ?';
     db.query(sql, [username], (err, results) => {
         if (err) return res.status(500).json({ message: 'Erreur serveur.' });
         if (results.length === 0) return res.status(401).json({ message: 'Identifiants incorrects.' });
+
         const user = results[0];
         if (password === user.password) {
-            const token = jwt.sign({ id: user.id, username: user.username, role: user.role }, SECRET_KEY, { expiresIn: '1h' });
-            return res.status(200).json({ token, role: user.role, username: user.username });
+            // CORRECTION CRITIQUE : Ajouter `grade: user.grade` ici
+            const tokenPayload = {
+                id: user.id,
+                username: user.username,
+                role: user.role,
+                nom: user.nom,
+                prenom: user.prenom,
+                grade: user.grade // <--- CETTE LIGNE EST ESSENTIELLE ET MANQUAIT
+            };
+            const token = jwt.sign(tokenPayload, SECRET_KEY, { expiresIn: '8h' });
+
+            // On renvoie juste le token. Le frontend le décodera.
+            return res.status(200).json({
+                token,
+                // Il n'est pas nécessaire de renvoyer les autres infos ici car elles sont dans le token
+            });
         } else {
             return res.status(401).json({ message: 'Identifiants incorrects.' });
         }
     });
 });
+
+// GET tous les utilisateurs (pour l'admin)
 app.get('/api/users', authenticateJWT, authorizeRole(['admin']), (req, res) => {
-    db.query('SELECT id, username, role, created_at FROM users', (err, results) => {
+    // MODIFIÉ : Sélectionner les nouvelles colonnes
+    const sql = 'SELECT id, username, role, created_at, nom, prenom, grade FROM users ORDER BY created_at DESC';
+    db.query(sql, (err, results) => {
         if (err) return res.status(500).json({ message: 'Erreur serveur.' });
         res.status(200).json(results);
     });
 });
+
+// NOUVELLE ROUTE : Mettre à jour un utilisateur (pour l'admin)
+app.put('/api/users/:id', authenticateJWT, authorizeRole(['admin']), (req, res) => {
+    const userId = req.params.id;
+    const { username, role, nom, prenom, grade, password } = req.body;
+
+    if (!username || !role) {
+        return res.status(400).json({ message: 'Le nom d\'utilisateur et le rôle sont requis.' });
+    }
+
+    let sql = 'UPDATE users SET username = ?, role = ?, nom = ?, prenom = ?, grade = ?';
+    const params = [username, role, nom, prenom, grade];
+
+    // On met à jour le mot de passe seulement s'il est fourni
+    if (password && password.trim() !== '') {
+        sql += ', password = ?';
+        params.push(password);
+    }
+
+    sql += ' WHERE id = ?';
+    params.push(userId);
+    
+    db.query(sql, params, (err, result) => {
+        if (err) {
+            if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ message: 'Ce nom d\'utilisateur est déjà pris.' });
+            return res.status(500).json({ message: 'Erreur serveur lors de la mise à jour.' });
+        }
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: 'Utilisateur non trouvé.' });
+        }
+        res.status(200).json({ message: 'Utilisateur mis à jour avec succès.' });
+    });
+});
+
+
 app.delete('/api/users/:id', authenticateJWT, authorizeRole(['admin']), (req, res) => {
-    if (req.params.id == req.user.id) return res.status(403).json({ message: 'Impossible de supprimer son propre compte.' });
+    // Interdiction de se supprimer soi-même
+    if (req.params.id == req.user.id) {
+        return res.status(403).json({ message: 'Vous ne pouvez pas supprimer votre propre compte.' });
+    }
     db.query('DELETE FROM users WHERE id = ?', [req.params.id], (err, result) => {
         if (err) return res.status(500).json({ message: 'Erreur serveur.' });
         if (result.affectedRows === 0) return res.status(404).json({ message: 'Utilisateur non trouvé.' });
         res.status(200).json({ message: 'Utilisateur supprimé.' });
     });
 });
+
+// ===== FIN DU BLOC DE GESTION UTILISATEURS =====
 // ==============================================
 // === ROUTE DE CRÉATION DE QUESTION (MODIFIÉE) ===
 // ==============================================
@@ -209,12 +284,12 @@ app.post('/api/questions', authenticateJWT, authorizeRole(['admin', 'saisie']), 
         const finalReponses = parsedReponses.map((rep, index) => {
             const reponseImageFile = req.files.find(f => f.fieldname === `reponse_image_${index}`);
             return {
-                texte: rep.texte, 
+                texte: rep.texte,
                 est_correcte: rep.est_correcte,
                 image_url: reponseImageFile ? `/uploads/${reponseImageFile.filename}` : null
             };
         });
-        
+
         if (type_question === 'QCM' && finalReponses.length === 0) {
             return res.status(400).json({ message: 'Au moins une réponse est requise pour un QCM.' });
         }
@@ -278,7 +353,7 @@ app.put('/api/questions/:id', authenticateJWT, authorizeRole(['admin', 'saisie']
             return res.status(404).json({ message: 'Question non trouvée.' });
         }
         const currentQuestion = normalizeReponses(currentQuestionRows[0]);
-        
+
         let parsedReponses = JSON.parse(reponses || '[]');
         let parsedMeta = JSON.parse(reponses_meta || 'null');
         let parsedRemovedImages = JSON.parse(removed_images || '[]');
@@ -365,7 +440,7 @@ app.delete('/api/questions/:id', authenticateJWT, authorizeRole(['admin', 'saisi
             await connection.rollback();
             return res.status(404).json({ message: 'Question non trouvée.' });
         }
-        
+
         // 3. Supprimer les fichiers du disque
         const deleteFile = (url) => {
             if (url) {
@@ -379,7 +454,7 @@ app.delete('/api/questions/:id', authenticateJWT, authorizeRole(['admin', 'saisi
         if (question.reponses && Array.isArray(question.reponses)) {
             question.reponses.forEach(rep => deleteFile(rep.image_url));
         }
-        
+
         await connection.commit();
         res.status(200).json({ message: 'Question supprimée avec succès.' });
 
@@ -504,7 +579,7 @@ app.post('/api/chapitres', authenticateJWT, authorizeRole(['admin', 'saisie']), 
         if (!id_matiere) {
             return res.status(400).json({ message: 'L\'ID de la matière est requis pour la création en masse.' });
         }
-        
+
         const count = parseInt(nombre_a_creer, 10);
         const connection = await db.promise().getConnection();
         try {
@@ -512,7 +587,7 @@ app.post('/api/chapitres', authenticateJWT, authorizeRole(['admin', 'saisie']), 
             if (matiereRows.length === 0) {
                 return res.status(404).json({ message: 'Matière non trouvée.' });
             }
-            
+
             const abreviation = matiereRows[0].abreviation;
             if (!abreviation) {
                 return res.status(400).json({ message: 'La matière sélectionnée n\'a pas d\'abréviation, impossible de créer en masse.' });
@@ -526,7 +601,7 @@ app.post('/api/chapitres', authenticateJWT, authorizeRole(['admin', 'saisie']), 
 
             const sql = 'INSERT IGNORE INTO chapitres (id_matiere, nom_chapitre) VALUES ?';
             const [result] = await connection.query(sql, [values]);
-            
+
             return res.status(201).json({
                 message: `${result.affectedRows} chapitre(s) créé(s). ${values.length - result.affectedRows} existai(en)t déjà.`
             });
@@ -549,10 +624,10 @@ app.post('/api/chapitres', authenticateJWT, authorizeRole(['admin', 'saisie']), 
         try {
             const sql = 'INSERT INTO chapitres (id_matiere, nom_chapitre, description) VALUES (?, ?, ?)';
             const [result] = await db.promise().execute(sql, [id_matiere, nom_chapitre, description || null]);
-            
-            return res.status(201).json({ 
-                id: result.insertId, 
-                message: 'Chapitre créé avec succès.' 
+
+            return res.status(201).json({
+                id: result.insertId,
+                message: 'Chapitre créé avec succès.'
             });
         } catch (err) {
             if (err.code === 'ER_DUP_ENTRY') {
@@ -585,7 +660,7 @@ app.get('/api/chapitres', authenticateJWT, async (req, res) => {
         sql += ' WHERE c.id_matiere = ?';
         params.push(matiereId);
     }
-    
+
     // On ajoute un tri pour la cohérence
     sql += ' ORDER BY c.nom_chapitre ASC';
 
@@ -833,7 +908,7 @@ function trouverCombinaison(questionsDisponibles, pointsRestants, questionsUtili
         if (questionsUtilisees.has(questionActuelle.id)) continue;
         const nouvellesQuestionsDisponibles = questionsMelangees.slice(i + 1);
         const nouvellesQuestionsUtilisees = new Set(questionsUtilisees).add(questionActuelle.id);
-        
+
         // Le reste de la fonction ne change pas
         const resultatRecursif = trouverCombinaison(nouvellesQuestionsDisponibles, pointsRestants - questionActuelle.points, nouvellesQuestionsUtilisees);
         if (resultatRecursif !== null) {
@@ -908,7 +983,7 @@ if (allAvailableQuestions.length === 0) {
                     isVersionPossible = false;
                     // On envoie un message d'erreur clair à l'utilisateur
                     return res.status(400).json({
-                        message: `Impossible de créer une combinaison de ${targetPoints} points pour la matière (ID: ${matiereId}). Il n'y a probablement pas assez de questions ou les points ne correspondent pas.`
+                        message: `Impossible de créer une combinaison de ${targetPoints} points pour la matière (ID: ${matiereId}). Il n'y a probably pas assez de questions ou les points ne correspondent pas.`
                     });
                 }
 
@@ -1090,6 +1165,62 @@ app.get('/api/sujets-sauvegardes/:id', authenticateJWT, async (req, res) => {
         res.status(500).json({ message: "Erreur serveur." });
     }
 });
+// server.js
+
+// ... (tout le code précédent de votre fichier)
+
+// ===============================================
+// === NOUVELLE ROUTE POUR LA GÉNÉRATION DE L'ORAL ===
+// ===============================================
+app.post('/api/questions/for-oral', authenticateJWT, authorizeRole(['admin', 'saisie']), async (req, res) => {
+    // 1. Récupérer les IDs des matières et chapitres depuis le corps de la requête.
+    const { matiereIds, chapitreIds } = req.body;
+
+    // 2. Valider l'entrée : il faut au moins des IDs de matières.
+    if (!Array.isArray(matiereIds) || matiereIds.length === 0) {
+        return res.status(400).json({ message: "Veuillez fournir une liste d'IDs de matières." });
+    }
+
+    try {
+        // 3. Construire la requête SQL de base.
+        // On sélectionne toutes les colonnes nécessaires, y compris celles des jointures.
+        // On utilise normalizeReponses plus tard, donc on peut prendre 'reponses' tel quel.
+        let sql = `
+            SELECT q.id, q.id_matiere, q.id_chapitre, q.enonce, q.type_question, q.reponses, q.points, q.created_at, q.reponses_meta, q.image_enonce_url,
+                   m.nom_matiere, c.nom_chapitre
+            FROM questions q
+            JOIN matières m ON q.id_matiere = m.id
+            LEFT JOIN chapitres c ON q.id_chapitre = c.id
+            WHERE q.id_matiere IN (?)
+        `;
+        const params = [matiereIds];
+
+        // 4. Ajouter le filtre sur les chapitres si nécessaire.
+        // On s'assure que chapitreIds est bien un tableau non vide.
+        if (Array.isArray(chapitreIds) && chapitreIds.length > 0) {
+            sql += ` AND q.id_chapitre IN (?)`;
+            params.push(chapitreIds);
+        }
+
+        // 5. Exécuter la requête.
+        const [rawQuestions] = await db.promise().query(sql, params);
+
+        // 6. Normaliser les résultats (comme pour la route GET /questions).
+        // C'est important si certaines de vos questions ont des réponses complexes.
+        const allAvailableQuestions = rawQuestions.map(normalizeReponses);
+
+        // 7. Renvoyer la liste des questions au format JSON.
+        res.status(200).json(allAvailableQuestions);
+
+    } catch (err) {
+        // Gestion des erreurs
+        console.error("Erreur lors de la récupération des questions pour l'oral:", err);
+        res.status(500).json({ message: "Une erreur est survenue sur le serveur lors de la récupération des questions." });
+    }
+});
+
+
+// ... (le reste de votre fichier server.js, comme la route GET /api/sujets-sauvegardes/:id etc.)
 
 // ... (le reste de votre fichier server.js est en dessous) ...
 // ===============================================

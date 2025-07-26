@@ -1,60 +1,52 @@
-import React, { useState } from 'react';
-// import axios from 'axios'; // <- On n'a plus besoin d'importer axios directement
-import { useNavigate } from 'react-router-dom';
+// --- START OF FILE src/pages/RegisterPage.jsx (AVEC MENU DÉROULANT) ---
 
-// 1. MODIFICATION : On importe notre client API centralisé et pré-configuré
-import apiClient from '../services/apiClient'; // Assurez-vous que le chemin est correct
+import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import apiClient from '../config/api';
+// NOUVEAU : Importer la liste des grades
+import { GRADES_LIST } from '../config/constants';
 
 const RegisterPage = () => {
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
     const [role, setRole] = useState('saisie');
+    const [nom, setNom] = useState('');
+    const [prenom, setPrenom] = useState('');
+    const [grade, setGrade] = useState(''); // L'état initial vide est parfait pour un select
     const [message, setMessage] = useState('');
     const [error, setError] = useState('');
     const navigate = useNavigate();
 
     const handleRegister = async (e) => {
         e.preventDefault();
+        // ... la fonction reste identique
         setMessage('');
         setError('');
 
         try {
-            // Le token est récupéré et vérifié par le ProtectedRoute et par l'intercepteur de apiClient.
-            // Il n'est plus nécessaire de le gérer manuellement ici.
-
-            // 2. MODIFICATION MAJEURE : L'appel est simplifié et centralisé
-            //
-            // AVANT (URL en dur et header manuel) :
-            // await axios.post('http://localhost:5000/api/register', {
-            //     username,
-            //     password,
-            //     role
-            // }, {
-            //     headers: {
-            //         Authorization: `Bearer ${token}`
-            //     }
-            // });
-            //
-            // APRÈS (URL relative, le token est ajouté automatiquement) :
-            // `apiClient` connaît déjà la base "http://localhost:5000/api".
-            // Il suffit de lui donner la fin du chemin.
             await apiClient.post('/register', {
                 username,
                 password,
-                role
+                role,
+                nom,
+                prenom,
+                grade
             });
 
             setMessage('Utilisateur enregistré avec succès !');
             setUsername('');
             setPassword('');
             setRole('saisie');
+            setNom('');
+            setPrenom('');
+            setGrade('');
+
             setTimeout(() => {
                 setMessage('');
                 navigate('/users');
             }, 2000);
         } catch (err) {
             console.error('Erreur lors de l\'enregistrement:', err);
-            // La gestion d'erreur reste la même, ce qui est parfait.
             if (err.response && err.response.data && err.response.data.message) {
                 setError(err.response.data.message);
             } else {
@@ -63,7 +55,6 @@ const RegisterPage = () => {
         }
     };
 
-    // Le JSX reste exactement le même, aucune modification n'est nécessaire ici.
     return (
         <div className="container mx-auto p-4 flex justify-center items-center h-screen-minus-navbar">
             <div className="bg-white p-8 rounded shadow-md w-full max-w-md">
@@ -71,9 +62,53 @@ const RegisterPage = () => {
                 {message && <div className="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded relative mb-4">{message}</div>}
                 {error && <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4">{error}</div>}
                 <form onSubmit={handleRegister}>
+                    
+                    <div className="mb-4">
+                        <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="grade">
+                            Grade:
+                        </label>
+                        {/* MODIFIÉ : Remplacement de l'input par un select */}
+                        <select
+                            id="grade"
+                            className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                            value={grade}
+                            onChange={(e) => setGrade(e.target.value)}
+                        >
+                            <option value="">-- Sélectionner un grade --</option>
+                            {GRADES_LIST.map(g => (
+                                <option key={g} value={g}>{g}</option>
+                            ))}
+                        </select>
+                    </div>
+
+                    <div className="mb-4">
+                        <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="nom">
+                            Nom:
+                        </label>
+                        <input
+                            type="text"
+                            id="nom"
+                            className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                            value={nom}
+                            onChange={(e) => setNom(e.target.value)}
+                        />
+                    </div>
+                    <div className="mb-4">
+                        <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="prenom">
+                            Prénom:
+                        </label>
+                        <input
+                            type="text"
+                            id="prenom"
+                            className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                            value={prenom}
+                            onChange={(e) => setPrenom(e.target.value)}
+                        />
+                    </div>
+                    {/* ... Le reste du formulaire ne change pas ... */}
                     <div className="mb-4">
                         <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="username">
-                            Nom d'utilisateur:
+                            Nom d'utilisateur (requis):
                         </label>
                         <input
                             type="text"
@@ -87,7 +122,7 @@ const RegisterPage = () => {
                     </div>
                     <div className="mb-4">
                         <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="password">
-                            Mot de passe:
+                            Mot de passe (requis):
                         </label>
                         <input
                             type="password"
@@ -101,7 +136,7 @@ const RegisterPage = () => {
                     </div>
                     <div className="mb-6">
                         <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="role">
-                            Rôle:
+                            Rôle (requis):
                         </label>
                         <select
                             id="role"

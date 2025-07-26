@@ -1,4 +1,4 @@
-// Contenu de /var/www/bdquestions/banquedesquestions/frontend/vite.config.ts
+// /var/www/bdquestions/banquedesquestions/frontend/vite.config.ts
 
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
@@ -8,24 +8,48 @@ export default defineConfig({
   plugins: [react()],
 
   server: {
-    // Cette option que vous avez déjà permet d'accéder au site depuis
-    // d'autres appareils sur le même réseau.
-    host: true, // <-- CONSERVER CETTE LIGNE
-
-    // ==========================================================
-    // === AJOUTER CE BLOC 'proxy' DANS LA SECTION 'server' ===
-    // ==========================================================
+    host: true, 
     proxy: {
-      // Redirige les requêtes qui commencent par /api
       '/api': {
-        target: 'http://localhost:5000', // L'adresse de votre backend Node.js
-        changeOrigin: true, // Nécessaire pour les hôtes virtuels
+        target: 'http://localhost:5000',
+        changeOrigin: true, 
       },
-      // Redirige les requêtes pour les images qui commencent par /uploads
       '/uploads': {
         target: 'http://localhost:5000',
         changeOrigin: true,
       }
     }
+  },
+
+  // ==========================================================
+  // ===           AJOUTER TOUT CE BLOC 'build'             ===
+  // ==========================================================
+  build: {
+    rollupOptions: {
+      output: {
+        // Crée des fichiers séparés pour les grosses bibliothèques
+        // pour améliorer le caching et le chargement initial.
+        manualChunks(id) {
+          if (id.includes('jspdf')) {
+            return 'jspdf';
+          }
+          if (id.includes('html2canvas')) {
+            return 'html2canvas';
+          }
+          if (id.includes('docx')) {
+            return 'docx';
+          }
+        }
+      }
+    }
+  },
+
+  // ==========================================================
+  // ===         AJOUTER CETTE OPTION 'optimizeDeps'        ===
+  // ==========================================================
+  // Ceci empêche Vite de pré-compiler jspdf, ce qui est la cause
+  // la plus probable de la suppression du module de cryptage.
+  optimizeDeps: {
+    exclude: ['jspdf']
   }
 })

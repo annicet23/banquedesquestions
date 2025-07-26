@@ -1,8 +1,9 @@
-// frontend/src/App.jsx (Version Corrigée et Améliorée)
+// frontend/src/App.jsx (VERSION FINALE SANS BrowserRouter)
 
 import React from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
-import { AuthProvider, useAuth } from './context/AuthContext'; // <--- IMPORTER AuthProvider ET useAuth
+// MODIFIÉ : BrowserRouter a été retiré des imports
+import { Routes, Route, Navigate, Outlet } from 'react-router-dom';
+import { AuthProvider, useAuth } from './context/AuthContext';
 
 // Importation de toutes vos pages
 import LoginPage from './pages/LoginPage';
@@ -19,71 +20,62 @@ import PageSujet from './pages/PageSujet';
 
 import Navbar from './components/Navbar';
 
-// --- NOUVEAU ProtectedRoute utilisant le Contexte ---
-// C'est beaucoup plus propre et fiable que de lire localStorage à chaque fois.
-const ProtectedRoute = ({ children, allowedRoles }) => {
-    const { isLoggedIn, user, isLoading } = useAuth();
-
-    // Pendant que le contexte vérifie le token au démarrage, on n'affiche rien.
-    if (isLoading) {
-        return <div>Chargement...</div>; // Ou un spinner de chargement
-    }
-
-    // Si l'utilisateur n'est pas connecté, on le redirige vers le login.
-    if (!isLoggedIn) {
-        return <Navigate to="/login" replace />;
-    }
-
-    // Si la route demande un rôle spécifique et que l'utilisateur ne l'a pas, on le redirige.
-    if (allowedRoles && !allowedRoles.includes(user.role)) {
-        return <Navigate to="/dashboard" replace />; // Redirection vers une page sûre
-    }
-
-    // Si tout est bon, on affiche la page demandée.
-    return children;
+// Le ProtectedRoute reste le même
+const ProtectedRoute = ({ allowedRoles }) => {
+    const { isAuthenticated, user, loading } = useAuth();
+    if (loading) return <div className="flex justify-center items-center h-screen">Chargement...</div>;
+    if (!isAuthenticated) return <Navigate to="/login" replace />;
+    if (allowedRoles && !allowedRoles.includes(user.role)) return <Navigate to="/dashboard" replace />;
+    return <Outlet />;
 };
 
-// Le composant App ne fait que définir la structure des routes.
-const AppContent = () => {
-    return (
-        <>
-            <Navbar />
-            <div className="pt-16">
-                <main>
-                    <Routes>
-                        {/* Routes Publiques */}
-                        <Route path="/login" element={<LoginPage />} />
-                        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+// Le MainLayout reste le même
+const MainLayout = () => (
+    <>
+        <Navbar />
+        <main className="pt-16"><Outlet /></main>
+    </>
+);
 
-                        {/* Routes Protégées (la logique est maintenant dans notre nouveau ProtectedRoute) */}
-                        <Route path="/dashboard" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
-                        <Route path="/users" element={<ProtectedRoute allowedRoles={['admin']}><UserManagementPage /></ProtectedRoute>} />
-                        <Route path="/register" element={<ProtectedRoute allowedRoles={['admin']}><RegisterPage /></ProtectedRoute>} />
-                        <Route path="/matieres" element={<ProtectedRoute allowedRoles={['admin', 'saisie']}><MatiereManagementPage /></ProtectedRoute>} />
-                        <Route path="/chapitres" element={<ProtectedRoute allowedRoles={['admin', 'saisie']}><ChapitreManagementPage /></ProtectedRoute>} />
-                        <Route path="/examens" element={<ProtectedRoute allowedRoles={['admin', 'saisie']}><ExamenManagementPage /></ProtectedRoute>} />
-                        <Route path="/questions" element={<ProtectedRoute allowedRoles={['admin', 'saisie']}><QuestionManagementPage /></ProtectedRoute>} />
-                        <Route path="/promotions" element={<ProtectedRoute allowedRoles={['admin', 'saisie']}><PromotionManagementPage /></ProtectedRoute>} />
-                        <Route path="/generate-exam" element={<ProtectedRoute allowedRoles={['admin', 'saisie']}><GenerateExamPage /></ProtectedRoute>} />
-                        <Route path="/sujets-sauvegardes" element={<ProtectedRoute allowedRoles={['admin', 'saisie']}><PageSujet /></ProtectedRoute>} />
-                        <Route path="/examens/:examenId/questions" element={<ProtectedRoute allowedRoles={['admin', 'saisie']}><QuestionManagementPage /></ProtectedRoute>} />
-                        
-                        {/* Route par défaut */}
-                        <Route path="*" element={<Navigate to="/dashboard" />} />
-                    </Routes>
-                </main>
-            </div>
-        </>
-    );
-};
+// App ne contient plus le BrowserRouter, juste le Provider et les Routes
+function App() {
+  return (
+    <AuthProvider>
+        {/* Le BrowserRouter a été retiré, car il est déjà dans main.tsx */}
+        <Routes>
+            {/* Route publique */}
+            <Route path="/login" element={<LoginPage />} />
 
-// Le composant principal App qui enveloppe tout avec le Provider.
-const App = () => {
-    return (
-        <AuthProvider>
-            <AppContent />
-        </AuthProvider>
-    );
-};
+            {/* GROUPE DE ROUTES PROTÉGÉES */}
+            <Route element={<MainLayout />}>
+                
+                {/* Routes accessibles à 'admin' et 'saisie' */}
+                <Route element={<ProtectedRoute allowedRoles={['admin', 'saisie']} />}>
+                    <Route path="/dashboard" element={<DashboardPage />} />
+                    <Route path="/matieres" element={<MatiereManagementPage />} />
+                    <Route path="/chapitres" element={<ChapitreManagementPage />} />
+                    <Route path="/examens" element={<ExamenManagementPage />} />
+                    <Route path="/questions" element={<QuestionManagementPage />} />
+                    <Route path="/promotions" element={<PromotionManagementPage />} />
+                    <Route path="/generate-exam" element={<GenerateExamPage />} />
+                    <Route path="/sujets-sauvegardes" element={<PageSujet />} />
+                    <Route path="/examens/:examenId/questions" element={<QuestionManagementPage />} />
+                </Route>
+
+                {/* Routes accessibles UNIQUEMENT à 'admin' */}
+                <Route element={<ProtectedRoute allowedRoles={['admin']} />}>
+                    <Route path="/users" element={<UserManagementPage />} />
+                    <Route path="/register" element={<RegisterPage />} />
+                </Route>
+            
+            </Route>
+
+            {/* Redirections par défaut */}
+            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            <Route path="*" element={<Navigate to="/dashboard" />} />
+        </Routes>
+    </AuthProvider>
+  );
+}
 
 export default App;

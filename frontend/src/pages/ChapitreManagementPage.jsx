@@ -263,7 +263,7 @@ const ChapitreManagementPage = () => {
                                     </div>
                                      <div>
                                         <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="singleChapitreName">Nom du chapitre</label>
-                                        <input type="text" id="singleChapitreName" value={singleChapitreName} onChange={(e) => setSingleChapitreName(e.target.value)} required className="w-full p-2 border-gray-300 rounded-md shadow-sm" placeholder="Ex: Introduction à la POO"/>
+                                        <input type="text" id="singleChapitreName" value={singleChapitreName} onChange={(e) => setSingleChapitreName(e.target.value)} required className="w-full p-2 border-gray-300 rounded-md shadow-sm" placeholder="Ex:IS: LA PROTECTION DES MINEURS"/>
                                     </div>
                                     <div>
                                         <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="singleChapitreDesc">Description (optionnel)</label>

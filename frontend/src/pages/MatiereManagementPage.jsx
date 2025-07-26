@@ -198,7 +198,7 @@ const MatiereManagementPage = () => {
                                         {error && <p className="text-sm text-red-600 mb-2">{error}</p>}
                                         <div className="space-y-4">
                                             <input name="nom_matiere" value={formState.nom_matiere} onChange={handleFormChange} placeholder="Nom de la matière" required className="w-full border-gray-300 rounded-md shadow-sm p-3 focus:ring-primary focus:border-primary" />
-                                            <input name="abreviation" value={formState.abreviation} onChange={handleFormChange} placeholder="Abréviation (ex: MTH)" className="w-full border-gray-300 rounded-md shadow-sm p-3 focus:ring-primary focus:border-primary" />
+                                            <input name="abreviation" value={formState.abreviation} onChange={handleFormChange} placeholder="Abréviation (ex: APJ)" className="w-full border-gray-300 rounded-md shadow-sm p-3 focus:ring-primary focus:border-primary" />
                                             <textarea name="description" value={formState.description} onChange={handleFormChange} placeholder="Description" rows="3" className="w-full border-gray-300 rounded-md shadow-sm p-3 focus:ring-primary focus:border-primary" />
                                         </div>
                                         <div className="mt-6 flex justify-end space-x-2">

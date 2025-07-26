@@ -1,3 +1,5 @@
+/* frontend/src/index.css (CODE COMPLET) */
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -52,4 +54,43 @@
 }
 ::-webkit-scrollbar-thumb:hover {
   background: #aaa;
+}
+
+/* --- BLOC À AJOUTER POUR LA BULLE DE DIALOGUE --- */
+
+/* Style pour le conteneur de la bulle */
+.speech-bubble {
+  position: relative; 
+}
+
+/* Style pour créer la flèche de la bulle */
+.speech-bubble::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 0;
+  height: 0;
+  border: 15px solid transparent;
+  /* La couleur doit être la même que le fond de la bulle (bg-card = white) */
+  border-right-color: white; 
+  border-left: 0;
+  margin-top: -15px;
+  margin-left: -15px;
+}
+/* Animation de clignotement */
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* Style du curseur */
+.typing-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1.2rem; /* Ajustez la hauteur pour qu'elle corresponde à la taille du texte */
+  background-color: currentColor; /* Le curseur prend la couleur du texte */
+  animation: blink 1s step-end infinite;
+  margin-left: 2px;
 }
